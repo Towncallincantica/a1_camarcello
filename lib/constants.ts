@@ -1,0 +1,1 @@
+export const ADVENTURE_ID = process.env.NEXT_PUBLIC_ADVENTURE_ID!
