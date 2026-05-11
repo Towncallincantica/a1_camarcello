@@ -9,9 +9,15 @@ export async function createClient() {
     {
       cookies: {
         getAll: () => cookieStore.getAll(),
-        setAll: (c) => c.forEach(({ name, value, options }) =>
-          cookieStore.set(name, value, options))
-      }
+        setAll: (c) => {
+          try {
+            c.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options))
+          } catch {
+            // Ignorato in Server Components — solo Route Handlers e Server Actions possono scrivere cookie
+          }
+        },
+      },
     }
   )
 }
