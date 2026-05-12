@@ -1,0 +1,178 @@
+'use client'
+
+import { useEffect, useRef, useMemo } from 'react'
+import { createClient } from '@/lib/supabase/client'
+
+interface PlayerLocation {
+  user_id: string
+  display_name: string
+  lat: number
+  lng: number
+}
+
+interface Props {
+  initialLocations: PlayerLocation[]
+  currentUserId: string
+  episodeId: string
+}
+
+export function MapView({ initialLocations, currentUserId, episodeId }: Props) {
+  const mapRef = useRef<HTMLDivElement>(null)
+  const mapInstanceRef = useRef<unknown>(null)
+  const markersRef = useRef<Map<string, unknown>>(new Map())
+  const supabase = useMemo(() => createClient(), [])
+
+  useEffect(() => {
+    if (!mapRef.current) return
+    if (mapInstanceRef.current) return
+
+    let map: ReturnType<typeof import('leaflet')['map']> | null = null
+
+    import('leaflet').then((L) => {
+      // Doppio check dopo l'import asincrono
+      if (mapInstanceRef.current) return
+      if (!mapRef.current) return
+
+      delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
+      L.Icon.Default.mergeOptions({
+        iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+        iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+        shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+      })
+
+      const self = initialLocations.find((l) => l.user_id === currentUserId)
+      const center: [number, number] = self ? [self.lat, self.lng] : [45.5, 12.0]
+
+      map = L.map(mapRef.current, { center, zoom: 17, zoomControl: true })
+      mapInstanceRef.current = map
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap',
+        maxZoom: 19,
+      }).addTo(map)
+
+      for (const loc of initialLocations) {
+        const isSelf = loc.user_id === currentUserId
+        const marker = L.marker([loc.lat, loc.lng], {
+          icon: L.divIcon({
+            className: '',
+            html: markerHtml(loc.display_name, isSelf),
+            iconAnchor: [16, 16],
+          }),
+        }).addTo(map)
+        markersRef.current.set(loc.user_id, marker)
+      }
+
+      const channel = supabase
+        .channel(`map:${episodeId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'player_current_location' },
+          (payload) => {
+            const raw = payload.new as { user_id: string; lat?: number; lng?: number }
+            if (!raw.user_id || raw.lat == null || raw.lng == null) return
+
+            const isSelf = raw.user_id === currentUserId
+            const existing = markersRef.current.get(raw.user_id) as
+              | ReturnType<typeof L.marker> | undefined
+
+            if (existing) {
+              existing.setLatLng([raw.lat, raw.lng])
+            } else {
+              const displayName = initialLocations.find(
+                (l) => l.user_id === raw.user_id
+              )?.display_name ?? '?'
+              const marker = L.marker([raw.lat, raw.lng], {
+                icon: L.divIcon({
+                  className: '',
+                  html: markerHtml(displayName, isSelf),
+                  iconAnchor: [16, 16],
+                }),
+              }).addTo(map!)
+              markersRef.current.set(raw.user_id, marker)
+            }
+          }
+        )
+        .subscribe()
+
+      // Salva channel per cleanup
+      ;(mapInstanceRef.current as unknown as { _channel: unknown })._channel = channel
+    })
+
+    return () => {
+      if (mapInstanceRef.current) {
+        const m = mapInstanceRef.current as {
+          remove: () => void
+          _channel?: { unsubscribe: () => void }
+        }
+        try {
+          supabase.removeChannel(
+            (m as unknown as { _channel: Parameters<typeof supabase.removeChannel>[0] })._channel
+          )
+        } catch {}
+        try { m.remove() } catch {}
+        mapInstanceRef.current = null
+        markersRef.current.clear()
+      }
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <>
+      {/* Leaflet CSS */}
+      <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      />
+      <div
+        ref={mapRef}
+        style={{
+          width: '100%',
+          height: '100%',
+          minHeight: '400px',
+          background: '#1a1a18',
+        }}
+      />
+    </>
+  )
+}
+
+function markerHtml(label: string, isSelf: boolean): string {
+  const color = isSelf ? '#feeaa5' : '#e8e4dc'
+  const bg = isSelf ? 'rgba(254,234,165,0.15)' : 'rgba(255,255,255,0.08)'
+  const border = isSelf ? '#feeaa5' : 'rgba(255,255,255,0.3)'
+
+  return `
+    <div style="
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      gap:3px;
+      pointer-events:none;
+    ">
+      <div style="
+        width:32px;
+        height:32px;
+        border-radius:50%;
+        background:${bg};
+        border:2px solid ${border};
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-size:14px;
+        color:${color};
+        box-shadow:0 0 8px ${isSelf ? 'rgba(254,234,165,0.4)' : 'rgba(0,0,0,0.4)'};
+      ">◈</div>
+      <div style="
+        background:rgba(9,8,7,0.85);
+        border:1px solid ${border};
+        padding:1px 6px;
+        border-radius:999px;
+        font-size:10px;
+        color:${color};
+        white-space:nowrap;
+        letter-spacing:0.04em;
+      ">${label}</div>
+    </div>
+  `
+}

@@ -12,52 +12,47 @@ export default async function EpisodePage({
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  // Verifica che l'episodio appartenga a questo adventure
-  const { data: episode } = await supabase
-    .from('episodes')
-    .select('episode_id, name, physical_location, start_datetime, join_mode')
-    .eq('episode_id', episodeId)
-    .eq('adventure_id', ADVENTURE_ID)
-    .eq('is_active', true)
-    .single()
+  const [{ data: episode }, { data: player }] = await Promise.all([
+    supabase
+      .from('episodes')
+      .select('episode_id, name, physical_location, start_datetime, join_mode')
+      .eq('episode_id', episodeId)
+      .eq('adventure_id', ADVENTURE_ID)
+      .eq('is_active', true)
+      .single(),
+    supabase
+      .from('player')
+      .select('player_id, display_name, level, experience_points')
+      .eq('user_id', user.id)
+      .eq('adventure_id', ADVENTURE_ID)
+      .single(),
+  ])
 
   if (!episode) redirect('/play')
-
-  // Verifica che il player esista
-  const { data: player } = await supabase
-    .from('player')
-    .select('player_id, display_name, level, experience_points')
-    .eq('user_id', user.id)
-    .eq('adventure_id', ADVENTURE_ID)
-    .single()
-
   if (!player) redirect('/play')
 
-  // Verifica join episodio
-  const { data: stats } = await supabase
-    .from('player_episode_stats')
-    .select('player_id')
-    .eq('player_id', player.player_id)
-    .eq('episode_id', episodeId)
-    .single()
-
-  // Content nodes dell'episodio
-  const { data: nodes } = await supabase
-    .from('content_nodes')
-    .select(`
-      node_id, name, node_category, content_html,
-      targets ( target_id, type, payload ),
-      conditions ( condition_id, type, payload )
-    `)
-    .eq('episode_id', episodeId)
-    .order('created_at', { ascending: true })
-
-  // Progresso player sui target
-  const { data: progress } = await supabase
-    .from('player_target_progress')
-    .select('target_id, completed')
-    .eq('player_id', player.player_id)
-    .eq('episode_id', episodeId)
+  const [{ data: stats }, { data: nodes }, { data: progress }] = await Promise.all([
+    supabase
+      .from('player_episode_stats')
+      .select('player_id')
+      .eq('player_id', player.player_id)
+      .eq('episode_id', episodeId)
+      .single(),
+    supabase
+      .from('content_nodes')
+      .select(`
+        node_id, name, node_category, content_html,
+        targets ( target_id, type, payload ),
+        conditions ( condition_id, type, payload )
+      `)
+      .eq('episode_id', episodeId)
+      .order('created_at', { ascending: true }),
+    supabase
+      .from('player_target_progress')
+      .select('target_id, completed')
+      .eq('player_id', player.player_id)
+      .eq('episode_id', episodeId),
+  ])
 
   const completedTargets = new Set(
     (progress ?? []).filter(p => p.completed).map(p => p.target_id)
@@ -68,7 +63,7 @@ export default async function EpisodePage({
       minHeight: '100vh',
       background: '#090807',
       color: '#e8e4dc',
-      fontFamily: 'Georgia, serif',
+      fontFamily: "'EB Garamond', Georgia, serif",
       paddingBottom: '4rem',
     }}>
       {/* Header episodio */}
@@ -80,10 +75,10 @@ export default async function EpisodePage({
         justifyContent: 'space-between',
       }}>
         <div>
-          <a href="/play" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.8rem', textDecoration: 'none' }}>
+          <a href="/play" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.75rem', textDecoration: 'none', fontFamily: "'Cinzel', Georgia, serif", letterSpacing: '0.06em' }}>
             ← Episodi
           </a>
-          <h1 style={{ color: '#feeaa5', fontSize: '1.1rem', margin: '0.25rem 0 0', letterSpacing: '0.05em' }}>
+          <h1 style={{ color: '#feeaa5', fontSize: '1.1rem', margin: '0.25rem 0 0', letterSpacing: '0.06em', fontFamily: "'Cinzel', Georgia, serif" }}>
             {episode.name}
           </h1>
           {episode.physical_location && (
@@ -92,9 +87,17 @@ export default async function EpisodePage({
             </p>
           )}
         </div>
-        <div style={{ textAlign: 'right', fontSize: '0.8rem', color: 'rgba(255,255,255,0.4)' }}>
-          <div>{player.display_name}</div>
-          <div>Lv {player.level} · {player.experience_points} XP</div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
+          <div style={{ textAlign: 'right', fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', fontFamily: "'Cinzel', Georgia, serif", letterSpacing: '0.04em' }}>
+            <div style={{ color: 'rgba(254,234,165,0.7)' }}>{player.display_name}</div>
+            <div>Lv {player.level} · {player.experience_points} XP</div>
+          </div>
+          <a
+            href={`/play/${episodeId}/team`}
+            style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.35)', fontFamily: "'Cinzel', Georgia, serif", letterSpacing: '0.06em', textDecoration: 'none', padding: '0.25rem 0.65rem', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '999px', whiteSpace: 'nowrap' }}
+          >
+            👥 Team
+          </a>
         </div>
       </div>
 
@@ -125,17 +128,19 @@ export default async function EpisodePage({
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <h2 style={{
                       color: allCompleted ? '#64d278' : '#feeaa5',
-                      fontSize: '0.95rem',
-                      letterSpacing: '0.08em',
+                      fontSize: '0.85rem',
+                      letterSpacing: '0.1em',
                       margin: 0,
                       textTransform: 'uppercase',
+                      fontFamily: "'Cinzel', Georgia, serif",
                     }}>
                       {node.name}
                     </h2>
                     <span style={{
-                      fontSize: '0.7rem',
-                      color: 'rgba(255,255,255,0.3)',
+                      fontSize: '0.65rem',
+                      color: 'rgba(255,255,255,0.25)',
                       letterSpacing: '0.05em',
+                      fontFamily: "'Cinzel', Georgia, serif",
                     }}>
                       {node.node_category}
                     </span>
@@ -143,30 +148,98 @@ export default async function EpisodePage({
 
                   {node.content_html && (
                     <div
-                      style={{ marginTop: '0.75rem', fontSize: '0.9rem', lineHeight: '1.6', color: '#e8e4dc' }}
+                      style={{ marginTop: '0.75rem', fontSize: '1rem', lineHeight: '1.7', color: '#e8e4dc' }}
                       dangerouslySetInnerHTML={{ __html: node.content_html }}
                     />
                   )}
 
                   {nodeTargets.length > 0 && (
                     <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                      {nodeTargets.map((target) => (
-                        <div key={target.target_id} style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.75rem',
-                          padding: '0.5rem 0.75rem',
-                          background: 'rgba(255,255,255,0.03)',
-                          border: '1px solid rgba(255,255,255,0.05)',
-                        }}>
-                          <span style={{ color: completedTargets.has(target.target_id) ? '#64d278' : 'rgba(255,255,255,0.3)', fontSize: '1rem' }}>
-                            {completedTargets.has(target.target_id) ? '✓' : '○'}
-                          </span>
-                          <span style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.6)' }}>
-                            {target.type}
-                          </span>
-                        </div>
-                      ))}
+                      {nodeTargets.map((target) => {
+                        const completed = completedTargets.has(target.target_id)
+                        const payload = target.payload as Record<string, unknown> ?? {}
+
+                        return (
+                          <div key={target.target_id} style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '0.75rem',
+                            padding: '0.5rem 0.75rem',
+                            background: 'rgba(255,255,255,0.02)',
+                            border: '1px solid rgba(255,255,255,0.05)',
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                              <span style={{ color: completed ? '#64d278' : 'rgba(255,255,255,0.25)', fontSize: '0.9rem' }}>
+                                {completed ? '✓' : '○'}
+                              </span>
+                              <span style={{ fontSize: '0.82rem', color: 'rgba(255,255,255,0.5)', fontFamily: "'Cinzel', Georgia, serif", letterSpacing: '0.04em' }}>
+                                {TARGET_LABELS[target.type as keyof typeof TARGET_LABELS] ?? target.type}
+                              </span>
+                            </div>
+
+                            {/* Azione per target non completati */}
+                            {!completed && (
+                              <>
+                                {(target.type === 'code_entry' || target.type === 'qr_scan') && (
+                                  <a
+                                    href={`/play/${episodeId}/code?targetId=${target.target_id}&nodeId=${node.node_id}`}
+                                    style={{
+                                      fontSize: '0.75rem',
+                                      color: '#e8af48',
+                                      fontFamily: "'Cinzel', Georgia, serif",
+                                      letterSpacing: '0.04em',
+                                      textDecoration: 'none',
+                                      padding: '0.3rem 0.75rem',
+                                      border: '1px solid rgba(232,175,72,0.3)',
+                                      borderRadius: '2px',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {target.type === 'qr_scan' ? 'Scansiona QR' : 'Inserisci codice'}
+                                  </a>
+                                )}
+                                {target.type === 'gps_location' && (
+                                  <a
+                                    href={`/play/${episodeId}/map`}
+                                    style={{
+                                      fontSize: '0.75rem',
+                                      color: '#a5feb8',
+                                      fontFamily: "'Cinzel', Georgia, serif",
+                                      letterSpacing: '0.04em',
+                                      textDecoration: 'none',
+                                      padding: '0.3rem 0.75rem',
+                                      border: '1px solid rgba(165,254,184,0.3)',
+                                      borderRadius: '2px',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    Vai alla mappa
+                                  </a>
+                                )}
+                                {target.type === 'claim_item' && (
+                                  <a
+                                    href={`/play/${episodeId}/claim?targetId=${target.target_id}&nodeId=${node.node_id}`}
+                                    style={{
+                                      fontSize: '0.75rem',
+                                      color: '#feeaa5',
+                                      fontFamily: "'Cinzel', Georgia, serif",
+                                      letterSpacing: '0.04em',
+                                      textDecoration: 'none',
+                                      padding: '0.3rem 0.75rem',
+                                      border: '1px solid rgba(254,234,165,0.3)',
+                                      borderRadius: '2px',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    Raccogli
+                                  </a>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                 </div>
@@ -178,6 +251,13 @@ export default async function EpisodePage({
     </main>
   )
 }
+
+const TARGET_LABELS = {
+  code_entry: 'Codice',
+  qr_scan: 'QR Code',
+  gps_location: 'Posizione GPS',
+  claim_item: 'Raccogli oggetto',
+} as const
 
 async function JoinEpisodeSection({
   episodeId,
@@ -201,22 +281,22 @@ async function JoinEpisodeSection({
     <div style={{
       margin: '3rem 1.5rem',
       padding: '2rem',
-      border: '1px solid rgba(254,234,165,0.2)',
+      border: '1px solid rgba(254,234,165,0.15)',
       textAlign: 'center',
     }}>
-      <p style={{ color: 'rgba(255,255,255,0.6)', marginBottom: '1.5rem' }}>
+      <p style={{ color: 'rgba(255,255,255,0.5)', marginBottom: '1.5rem', fontFamily: "'EB Garamond', Georgia, serif", fontSize: '1rem' }}>
         Vuoi partecipare a questo episodio?
       </p>
       <form action={joinEpisode}>
         <button type="submit" style={{
-          background: 'rgba(254,234,165,0.1)',
-          border: '1px solid #feeaa5',
+          background: 'rgba(254,234,165,0.08)',
+          border: '1px solid rgba(254,234,165,0.4)',
           color: '#feeaa5',
           padding: '0.75rem 2rem',
-          fontSize: '1rem',
+          fontSize: '0.85rem',
           cursor: 'pointer',
-          fontFamily: 'Georgia, serif',
-          letterSpacing: '0.05em',
+          fontFamily: "'Cinzel', Georgia, serif",
+          letterSpacing: '0.08em',
         }}>
           Entra nell&apos;episodio
         </button>
