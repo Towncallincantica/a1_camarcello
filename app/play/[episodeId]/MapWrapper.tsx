@@ -24,28 +24,34 @@ export default function MapWrapper({ episodeId, currentUserId }: Props) {
     // 1. Tutti i player dell'episodio con user_id e display_name
     const { data: players } = await supabase
       .from('player_episode_stats')
-      .select('player_id, player:player_id ( user_id, display_name )')
+      .select('player:player_id ( user_id, display_name )')
       .eq('episode_id', episodeId)
+
+      console.log('[MapWrapper] players:', players)
 
     if (!players || players.length === 0) return
 
     const userDisplayMap = new Map<string, string>()
-    const playerIds: string[] = []
+    const userIds: string[] = []
 
     for (const row of players) {
       const p = Array.isArray(row.player) ? row.player[0] : row.player
       if (p?.user_id) {
         userDisplayMap.set(p.user_id, (p as { display_name?: string }).display_name ?? '?')
-        playerIds.push(row.player_id)
+        userIds.push(p.user_id)
       }
     }
 
-    if (playerIds.length === 0) return
+    if (userIds.length === 0) return
 
-    // 2. RPC get_player_locations con p_player_ids uuid[]
-    const { data: rpcData } = await supabase
-      .rpc('get_player_locations', { p_player_ids: playerIds })
+    // 2. RPC get_player_locations riceve user_id[], non player_id[]
+    const { data: rpcData, error } = await supabase
+      .rpc('get_player_locations', { p_player_ids: userIds })
 
+console.log('[MapWrapper] userIds:', userIds)
+console.log('[MapWrapper] rpcData:', rpcData, 'error:', error)
+
+    if (error) console.error('[MapWrapper] RPC error:', error)
     if (!rpcData || (rpcData as unknown[]).length === 0) return
 
     const enriched: PlayerLocation[] = (
@@ -62,14 +68,12 @@ export default function MapWrapper({ episodeId, currentUserId }: Props) {
 
   useEffect(() => { loadLocations() }, [loadLocations])
 
-  // Ricarica ad ogni fix GPS del giocatore corrente
   useEffect(() => {
     const onGpsOk = () => loadLocations()
     window.addEventListener('gps:ok', onGpsOk)
     return () => window.removeEventListener('gps:ok', onGpsOk)
   }, [loadLocations])
 
-  // Realtime: aggiorna quando qualsiasi player si muove
   useEffect(() => {
     const channel = supabase
       .channel(`map-locations:${episodeId}`)
