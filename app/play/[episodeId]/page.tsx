@@ -53,9 +53,10 @@ export default async function EpisodePage({
       .select('target_id, completed')
       .eq('player_id', player.player_id)
       .eq('episode_id', episodeId),
+    // Inventario: stessa query che funziona in InventoryPage
     supabase
       .from('player_episode_inventory')
-      .select('item_id, quantity, items ( item_id, name, description, image_url )')
+      .select('quantity, items ( item_id, name, description, rarity, category, icon_url, is_consumable, base_value )')
       .eq('player_id', player.player_id)
       .eq('episode_id', episodeId)
       .gt('quantity', 0),
@@ -81,7 +82,10 @@ export default async function EpisodePage({
         .single(),
       supabase
         .from('team_messages')
-        .select('message_id, content, created_at, player_id, player:player_id ( display_name )')
+        .select(`
+          message_id, content, created_at, player_id,
+          player:player_id ( display_name )
+        `)
         .eq('team_id', teamId)
         .eq('episode_id', episodeId)
         .order('created_at', { ascending: true })
@@ -104,21 +108,29 @@ export default async function EpisodePage({
     (progress ?? []).filter(p => p.completed).map(p => p.target_id)
   )
 
-  // Fix inventario: Supabase restituisce items come oggetto singolo (join 1:1)
+  // Inventario: usa icon_url come da schema reale
   const inventoryItems = (inventory ?? []).map(row => {
     const item = (Array.isArray(row.items) ? row.items[0] : row.items) as {
       item_id: string
       name: string
       description: string | null
-      image_url: string | null
+      rarity: string
+      category: string | null
+      icon_url: string | null
+      is_consumable: boolean
+      base_value: number | null
     } | null
     if (!item) return null
     return {
       item_id: item.item_id,
       name: item.name,
       description: item.description ?? null,
-      image_url: item.image_url ?? null,
+      image_url: item.icon_url ?? null,
       quantity: row.quantity,
+      rarity: item.rarity,
+      category: item.category ?? null,
+      is_consumable: item.is_consumable,
+      base_value: item.base_value ?? null,
     }
   }).filter((x): x is NonNullable<typeof x> => x !== null)
 

@@ -43,23 +43,43 @@ export function TeamChat({ teamId, episodeId, playerId, displayName, initialMess
           table: 'team_messages',
           filter: `team_id=eq.${teamId}`,
         },
-        (payload) => {
+        async (payload) => {
           const msg = payload.new as {
             message_id: string
             content: string
             created_at: string
             player_id: string
           }
-          // Evita duplicati (il mittente ha già il messaggio in stato)
+
+          // Evita duplicati (il mittente ha già il messaggio in stato via optimistic)
           setMessages((prev) => {
             if (prev.some((m) => m.message_id === msg.message_id)) return prev
             return [...prev, {
               ...msg,
               player: msg.player_id === playerId
                 ? { display_name: displayName }
-                : null,
+                : { display_name: '...' },
             }]
           })
+
+          // Se il messaggio è di un altro player, recupera il display_name reale
+          if (msg.player_id !== playerId) {
+            const { data } = await supabase
+              .from('player')
+              .select('display_name')
+              .eq('player_id', msg.player_id)
+              .single()
+
+            if (data?.display_name) {
+              setMessages((prev) =>
+                prev.map(m =>
+                  m.message_id === msg.message_id
+                    ? { ...m, player: { display_name: data.display_name } }
+                    : m
+                )
+              )
+            }
+          }
         }
       )
       .subscribe()

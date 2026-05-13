@@ -1,8 +1,10 @@
 'use client'
 
-import { useRef, useState, useEffect, useCallback } from 'react'
+import { useRef, useState, useEffect, useCallback, useTransition } from 'react'
 import dynamic from 'next/dynamic'
+import { useRouter } from 'next/navigation'
 import { TeamChat } from './team/TeamChat'
+import { deleteItem } from './actions'
 
 const MapWrapper = dynamic(() => import('./MapWrapper'), { ssr: false })
 
@@ -28,6 +30,28 @@ type InventoryItem = {
   description: string | null
   image_url: string | null
   quantity: number
+  rarity?: string
+  category?: string | null
+  is_consumable?: boolean
+  base_value?: number | null
+}
+
+type PopupMode = 'actions' | 'details'
+
+const rarityColors: Record<string, string> = {
+  common: 'rgba(255,255,255,0.5)',
+  uncommon: '#64d278',
+  rare: '#5b9bd5',
+  epic: '#b57bee',
+  legendary: '#feeaa5',
+}
+
+const rarityLabels: Record<string, string> = {
+  common: 'Comune',
+  uncommon: 'Non comune',
+  rare: 'Raro',
+  epic: 'Epico',
+  legendary: 'Leggendario',
 }
 
 type ChatMessage = {
@@ -114,6 +138,11 @@ export default function EpisodeGameplay({
   const [joining, setJoining] = useState(false)
   const [containerH, setContainerH] = useState(700)
   const [qrError, setQrError] = useState<string | null>(null)
+  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
+  const [popupMode, setPopupMode] = useState<PopupMode | null>(null)
+  const [localInventory, setLocalInventory] = useState<InventoryItem[]>(inventoryItems)
+  const [isDeleting, startDeleteTransition] = useTransition()
+  const router = useRouter()
 
   // GPS state
   const [gpsStatus, setGpsStatus] = useState<'idle' | 'ok' | 'error'>('idle')
@@ -130,6 +159,11 @@ export default function EpisodeGameplay({
     window.addEventListener('resize', update)
     return () => window.removeEventListener('resize', update)
   }, [])
+
+  // ── Sync inventoryItems prop → localInventory ──────────────────────────────
+  useEffect(() => {
+    setLocalInventory(inventoryItems)
+  }, [inventoryItems])
 
   // ── GPS events (da GPSUploader) ────────────────────────────────────────────
   useEffect(() => {
@@ -225,6 +259,36 @@ export default function EpisodeGameplay({
     setJoining(false)
   }
 
+  // ── Inventory popup handlers ──────────────────────────────────────────────
+  const openItemPopup = (item: InventoryItem) => {
+    setSelectedItem(item)
+    setPopupMode('actions')
+  }
+
+  const closeItemPopup = () => {
+    setSelectedItem(null)
+    setPopupMode(null)
+  }
+
+  const handleItemDelete = () => {
+    if (!selectedItem) return
+    const itemId = selectedItem.item_id
+    startDeleteTransition(async () => {
+      await deleteItem(episodeId, player.player_id, itemId)
+      setLocalInventory(prev =>
+        prev.map(i => i.item_id !== itemId ? i : { ...i, quantity: i.quantity - 1 })
+           .filter(i => i.quantity > 0)
+      )
+      closeItemPopup()
+    })
+  }
+
+  const handleItemCombine = () => {
+    if (!selectedItem) return
+    closeItemPopup()
+    router.push(`/play/${episodeId}/combine?preselect=${selectedItem.item_id}`)
+  }
+
   // ── Active mission ─────────────────────────────────────────────────────────
   const activeMission = nodes.find(n =>
     n.targets.length > 0 && !n.targets.every(t => completedTargets.has(t.target_id))
@@ -239,10 +303,10 @@ export default function EpisodeGameplay({
 
   // ── Tab config ─────────────────────────────────────────────────────────────
   const tabs: { id: ActiveTab; icon: string; label: string }[] = [
-    { id: 'missioni', icon: '◈', label: 'MISSIONI' },
-    { id: 'qr',       icon: '⊡', label: 'SCAN QR' },
-    { id: 'borsa',    icon: '⊛', label: 'BORSA' },
-    { id: 'squadra',  icon: '◉', label: 'SQUADRA' },
+    { id: 'missioni', icon: '🗺️', label: '' },
+    { id: 'borsa',    icon: '🎒', label: '' },
+    { id: 'squadra',  icon: '👥', label: '' },
+    { id: 'qr',       icon: '📷', label: '' },
   ]
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -433,7 +497,7 @@ export default function EpisodeGameplay({
                 onClick={() => handleTabClick(id)}
                 style={{
                   flex: 1,
-                  height: 52,
+                  height: 46,
                   borderRadius: 9,
                   background: active ? 'rgba(254,234,165,0.07)' : C.surface2,
                   border: `1px solid ${active ? 'rgba(254,234,165,0.42)' : C.border}`,
@@ -600,69 +664,72 @@ export default function EpisodeGameplay({
             {/* TAB: BORSA */}
             {activeTab === 'borsa' && (
               <div style={{ flex: 1, overflowY: 'auto', padding: '4px 14px 14px' }}>
-                {inventoryItems.length === 0 ? (
+                {localInventory.length === 0 ? (
                   <p style={{ color: C.muted, fontSize: '0.9rem', paddingTop: 8 }}>
                     La borsa è vuota.
                   </p>
                 ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 9 }}>
-                    {inventoryItems.map(item => (
-                      <a
-                        key={item.item_id}
-                        href={`/play/${episodeId}/combine`}
-                        style={{
-                          background: C.surface2,
-                          border: `1px solid ${C.border}`,
-                          borderRadius: 8,
-                          padding: '9px 7px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          gap: 5,
-                          textDecoration: 'none',
-                          position: 'relative',
-                        }}
-                      >
-                        <div style={{
-                          width: 46, height: 46,
-                          borderRadius: 6,
-                          background: 'rgba(255,255,255,0.04)',
-                          border: `1px solid ${C.border}`,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          overflow: 'hidden',
-                        }}>
-                          {item.image_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={item.image_url} alt={item.name}
-                              style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          ) : (
-                            <span style={{ fontSize: '1.1rem', color: C.muted2 }}>◈</span>
-                          )}
-                        </div>
-                        <p style={{
-                          fontFamily: C.fontCinzel,
-                          fontSize: '0.48rem',
-                          letterSpacing: '0.06em',
-                          color: C.text,
-                          textAlign: 'center',
-                          lineHeight: 1.3,
-                          margin: 0,
-                        }}>
-                          {item.name}
-                        </p>
-                        {item.quantity > 1 && (
+                    {localInventory.map(item => {
+                      const rColor = rarityColors[item.rarity ?? 'common'] ?? C.muted
+                      return (
+                        <button
+                          key={item.item_id}
+                          onClick={() => openItemPopup(item)}
+                          style={{
+                            background: 'rgba(255,255,255,0.02)',
+                            border: `1px solid ${rColor}33`,
+                            borderRadius: 8,
+                            padding: '9px 7px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: 5,
+                            cursor: 'pointer',
+                            position: 'relative',
+                          }}
+                        >
                           <div style={{
-                            position: 'absolute', top: 5, right: 5,
-                            background: C.goldAction, color: '#080706',
-                            borderRadius: 999, width: 15, height: 15,
+                            width: 46, height: 46,
+                            borderRadius: 6,
+                            background: `${rColor}11`,
+                            border: `1px solid ${rColor}22`,
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: '0.46rem', fontFamily: C.fontCinzel, fontWeight: 700,
+                            overflow: 'hidden',
                           }}>
-                            {item.quantity}
+                            {item.image_url ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={item.image_url} alt={item.name}
+                                style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            ) : (
+                              <span style={{ fontSize: '1.1rem', color: rColor, opacity: 0.6 }}>◈</span>
+                            )}
                           </div>
-                        )}
-                      </a>
-                    ))}
+                          <p style={{
+                            fontFamily: C.fontCinzel,
+                            fontSize: '0.48rem',
+                            letterSpacing: '0.06em',
+                            color: rColor,
+                            textAlign: 'center',
+                            lineHeight: 1.3,
+                            margin: 0,
+                          }}>
+                            {item.name}
+                          </p>
+                          <span style={{
+                            position: 'absolute', top: 4, right: 5,
+                            color: 'rgba(255,255,255,0.4)', fontSize: '0.6rem',
+                          }}>
+                            ×{item.quantity}
+                          </span>
+                          <span style={{
+                            position: 'absolute', bottom: 4, right: 5,
+                            width: 5, height: 5, borderRadius: '50%',
+                            background: rColor, opacity: 0.7,
+                          }} />
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -699,6 +766,143 @@ export default function EpisodeGameplay({
         )}
 
       </div>
+      {/* ══ ITEM POPUP ═══════════════════════════════════════════════════════ */}
+      {popupMode && selectedItem && (
+        <div
+          onClick={closeItemPopup}
+          style={{
+            position: 'fixed', inset: 0,
+            background: 'rgba(0,0,0,0.78)',
+            display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+            zIndex: 200, padding: '0 0 5rem',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#111009',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: '12px 12px 0 0',
+              width: '100%', maxWidth: 420,
+              padding: '1.25rem',
+              display: 'flex', flexDirection: 'column', gap: '1rem',
+            }}
+          >
+            {/* Handle */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: -4 }}>
+              <div style={{ width: 36, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.15)' }} />
+            </div>
+
+            {/* Item header */}
+            {(() => {
+              const rColor = rarityColors[selectedItem.rarity ?? 'common'] ?? C.muted
+              return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <div style={{
+                    width: 48, height: 48, flexShrink: 0,
+                    background: `${rColor}11`, border: `1px solid ${rColor}33`,
+                    borderRadius: 6,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    overflow: 'hidden',
+                  }}>
+                    {selectedItem.image_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={selectedItem.image_url} alt={selectedItem.name}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <span style={{ color: rColor, fontSize: '1.2rem', opacity: 0.5 }}>◈</span>
+                    )}
+                  </div>
+                  <div>
+                    <p style={{ color: rColor, fontSize: '0.95rem', margin: 0, fontFamily: C.fontGaramond }}>
+                      {selectedItem.name}
+                    </p>
+                    <p style={{ color: C.muted, fontSize: '0.7rem', margin: '0.2rem 0 0', fontFamily: C.fontCinzel, letterSpacing: '0.06em' }}>
+                      {rarityLabels[selectedItem.rarity ?? 'common'] ?? selectedItem.rarity ?? ''}
+                      {selectedItem.category ? ` · ${selectedItem.category}` : ''}
+                    </p>
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* AZIONI */}
+            {popupMode === 'actions' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {[
+                  { label: 'Dettagli', emoji: '📖', action: () => setPopupMode('details'), enabled: true },
+                  { label: 'Combina', emoji: '⚗️', action: handleItemCombine, enabled: true },
+                  { label: 'Elimina', emoji: '🗑️', action: handleItemDelete, enabled: !isDeleting, danger: true },
+                  { label: 'Usa', emoji: '✨', action: () => {}, enabled: false, soon: true },
+                ].map(({ label, emoji, action, enabled, danger, soon }) => (
+                  <button
+                    key={label}
+                    onClick={enabled ? action : undefined}
+                    disabled={!enabled}
+                    style={{
+                      padding: '0.85rem 0.5rem',
+                      background: danger ? 'rgba(232,85,85,0.06)' : 'rgba(255,255,255,0.03)',
+                      border: `1px solid ${danger ? 'rgba(232,85,85,0.2)' : 'rgba(255,255,255,0.08)'}`,
+                      borderRadius: 8,
+                      color: !enabled ? 'rgba(255,255,255,0.2)' : danger ? 'rgba(232,85,85,0.75)' : C.text,
+                      fontFamily: C.fontGaramond,
+                      fontSize: '0.9rem',
+                      cursor: enabled ? 'pointer' : 'not-allowed',
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                    }}
+                  >
+                    <span style={{ fontSize: '1.3rem' }}>{emoji}</span>
+                    <span>{label}</span>
+                    {soon && (
+                      <span style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.2)', fontFamily: C.fontCinzel, letterSpacing: '0.06em' }}>
+                        prossimamente
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* DETTAGLI */}
+            {popupMode === 'details' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {selectedItem.description && (
+                  <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.88rem', lineHeight: 1.6, margin: 0, fontFamily: C.fontGaramond }}>
+                    {selectedItem.description}
+                  </p>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {[
+                    { label: 'Rarità', value: rarityLabels[selectedItem.rarity ?? 'common'] ?? selectedItem.rarity },
+                    selectedItem.category ? { label: 'Categoria', value: selectedItem.category } : null,
+                    { label: 'Consumabile', value: selectedItem.is_consumable ? 'Sì' : 'No' },
+                    selectedItem.base_value != null ? { label: 'Valore', value: String(selectedItem.base_value) } : null,
+                  ].filter(Boolean).map(row => (
+                    <div key={row!.label} style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.05)',
+                    }}>
+                      <span style={{ color: C.muted, fontSize: '0.78rem', fontFamily: C.fontCinzel, letterSpacing: '0.04em' }}>{row!.label}</span>
+                      <span style={{ color: C.text, fontSize: '0.78rem' }}>{row!.value}</span>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setPopupMode('actions')}
+                  style={{
+                    background: 'transparent', border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 6, color: C.muted, padding: '0.55rem',
+                    fontFamily: C.fontCinzel, fontSize: '0.72rem', cursor: 'pointer', letterSpacing: '0.06em',
+                  }}
+                >
+                  ← Azioni
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
