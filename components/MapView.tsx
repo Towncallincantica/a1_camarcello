@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useMemo } from 'react'
+import { createClient } from '@/lib/supabase/client'
 
 interface PlayerLocation {
   user_id: string
@@ -19,6 +20,7 @@ export function MapView({ initialLocations, currentUserId, episodeId }: Props) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<unknown>(null)
   const markersRef = useRef<Map<string, unknown>>(new Map())
+  const supabase = useMemo(() => createClient(), [])
 
   useEffect(() => {
     if (!mapRef.current) return
@@ -44,8 +46,9 @@ export function MapView({ initialLocations, currentUserId, episodeId }: Props) {
       map = L.map(mapRef.current, { center, zoom: 17, zoomControl: false })
       mapInstanceRef.current = map
 
-      L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png', {
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
         maxZoom: 19,
+        attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
       }).addTo(map)
 
       for (const loc of initialLocations) {
@@ -60,14 +63,52 @@ export function MapView({ initialLocations, currentUserId, episodeId }: Props) {
         markersRef.current.set(loc.user_id, marker)
       }
 
-      // Realtime rimosso: player_current_location usa PostGIS Geography,
-      // payload Realtime non contiene lat/lng leggibili.
-      // Aggiornamento posizioni → MapWrapper (RPC) → initialLocations prop.
+      const channel = supabase
+        .channel(`map:${episodeId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'player_current_location' },
+          (payload) => {
+            const raw = payload.new as { user_id: string; lat?: number; lng?: number }
+            if (!raw.user_id || raw.lat == null || raw.lng == null) return
+
+            const isSelf = raw.user_id === currentUserId
+            const existing = markersRef.current.get(raw.user_id) as
+              | ReturnType<typeof L.marker> | undefined
+
+            if (existing) {
+              existing.setLatLng([raw.lat, raw.lng])
+            } else {
+              const displayName = initialLocations.find(
+                (l) => l.user_id === raw.user_id
+              )?.display_name ?? '?'
+              const marker = L.marker([raw.lat, raw.lng], {
+                icon: L.divIcon({
+                  className: '',
+                  html: markerHtml(displayName, isSelf),
+                  iconAnchor: [16, 16],
+                }),
+              }).addTo(map!)
+              markersRef.current.set(raw.user_id, marker)
+            }
+          }
+        )
+        .subscribe()
+
+      ;(mapInstanceRef.current as unknown as { _channel: unknown })._channel = channel
     })
 
     return () => {
       if (mapInstanceRef.current) {
-        const m = mapInstanceRef.current as { remove: () => void }
+        const m = mapInstanceRef.current as {
+          remove: () => void
+          _channel?: { unsubscribe: () => void }
+        }
+        try {
+          supabase.removeChannel(
+            (m as unknown as { _channel: Parameters<typeof supabase.removeChannel>[0] })._channel
+          )
+        } catch {}
         try { m.remove() } catch {}
         mapInstanceRef.current = null
         markersRef.current.clear()
