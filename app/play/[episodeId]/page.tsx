@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { ADVENTURE_ID } from '@/lib/constants'
+import EpisodeGameplay from './EpisodeGameplay'
 
 export default async function EpisodePage({
   params,
@@ -31,10 +32,10 @@ export default async function EpisodePage({
   if (!episode) redirect('/play')
   if (!player) redirect('/play')
 
-  const [{ data: stats }, { data: nodes }, { data: progress }] = await Promise.all([
+  const [{ data: stats }, { data: nodes }, { data: progress }, { data: inventory }] = await Promise.all([
     supabase
       .from('player_episode_stats')
-      .select('player_id')
+      .select('player_id, team_id')
       .eq('player_id', player.player_id)
       .eq('episode_id', episodeId)
       .single(),
@@ -52,225 +53,80 @@ export default async function EpisodePage({
       .select('target_id, completed')
       .eq('player_id', player.player_id)
       .eq('episode_id', episodeId),
+    supabase
+      .from('player_episode_inventory')
+      .select('item_id, quantity, items ( item_id, name, description, image_url )')
+      .eq('player_id', player.player_id)
+      .eq('episode_id', episodeId)
+      .gt('quantity', 0),
   ])
+
+  // Team info + messaggi iniziali
+  let teamId: string | null = stats?.team_id ?? null
+  let teamName: string | null = null
+  let initialMessages: {
+    message_id: string
+    content: string
+    created_at: string
+    player_id: string
+    player: { display_name: string } | null
+  }[] = []
+
+  if (teamId) {
+    const [{ data: team }, { data: messages }] = await Promise.all([
+      supabase
+        .from('teams')
+        .select('name')
+        .eq('team_id', teamId)
+        .single(),
+      supabase
+        .from('team_messages')
+        .select('message_id, content, created_at, player_id, player:player_id ( display_name )')
+        .eq('team_id', teamId)
+        .eq('episode_id', episodeId)
+        .order('created_at', { ascending: true })
+        .limit(50),
+    ])
+    teamName = team?.name ?? null
+    initialMessages = (messages ?? []).map(m => {
+      const p = Array.isArray(m.player) ? m.player[0] : m.player
+      return {
+        message_id: m.message_id,
+        content: m.content,
+        created_at: m.created_at,
+        player_id: m.player_id,
+        player: p ? { display_name: (p as { display_name: string }).display_name } : null,
+      }
+    })
+  }
 
   const completedTargets = new Set(
     (progress ?? []).filter(p => p.completed).map(p => p.target_id)
   )
 
-  return (
-    <main style={{
-      minHeight: '100vh',
-      background: '#090807',
-      color: '#e8e4dc',
-      fontFamily: "'EB Garamond', Georgia, serif",
-      paddingBottom: '4rem',
-    }}>
-      {/* Header episodio */}
-      <div style={{
-        borderBottom: '1px solid rgba(255,255,255,0.07)',
-        padding: '1.25rem 1.5rem',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }}>
-        <div>
-          <a href="/play" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.75rem', textDecoration: 'none', fontFamily: "'Cinzel', Georgia, serif", letterSpacing: '0.06em' }}>
-            ← Episodi
-          </a>
-          <h1 style={{ color: '#feeaa5', fontSize: '1.1rem', margin: '0.25rem 0 0', letterSpacing: '0.06em', fontFamily: "'Cinzel', Georgia, serif" }}>
-            {episode.name}
-          </h1>
-          {episode.physical_location && (
-            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.8rem', margin: '0.2rem 0 0' }}>
-              {episode.physical_location}
-            </p>
-          )}
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
-          <div style={{ textAlign: 'right', fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', fontFamily: "'Cinzel', Georgia, serif", letterSpacing: '0.04em' }}>
-            <div style={{ color: 'rgba(254,234,165,0.7)' }}>{player.display_name}</div>
-            <div>Lv {player.level} · {player.experience_points} XP</div>
-          </div>
-          <a
-            href={`/play/${episodeId}/team`}
-            style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.35)', fontFamily: "'Cinzel', Georgia, serif", letterSpacing: '0.06em', textDecoration: 'none', padding: '0.25rem 0.65rem', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '999px', whiteSpace: 'nowrap' }}
-          >
-            👥 Team
-          </a>
-        </div>
-      </div>
+  // Fix inventario: Supabase restituisce items come oggetto singolo (join 1:1)
+  const inventoryItems = (inventory ?? []).map(row => {
+    const item = (Array.isArray(row.items) ? row.items[0] : row.items) as {
+      item_id: string
+      name: string
+      description: string | null
+      image_url: string | null
+    } | null
+    if (!item) return null
+    return {
+      item_id: item.item_id,
+      name: item.name,
+      description: item.description ?? null,
+      image_url: item.image_url ?? null,
+      quantity: row.quantity,
+    }
+  }).filter((x): x is NonNullable<typeof x> => x !== null)
 
-      {/* Join episodio */}
-      {!stats && (
-        <JoinEpisodeSection episodeId={episodeId} playerId={player.player_id} />
-      )}
-
-      {/* Content nodes */}
-      {stats && (
-        <div style={{ padding: '1.5rem' }}>
-          {!nodes || nodes.length === 0 ? (
-            <p style={{ color: 'rgba(255,255,255,0.4)' }}>Nessun contenuto disponibile.</p>
-          ) : (
-            nodes.map((node) => {
-              const nodeTargets = node.targets ?? []
-              const allCompleted = nodeTargets.length > 0 &&
-                nodeTargets.every(t => completedTargets.has(t.target_id))
-
-              return (
-                <div key={node.node_id} style={{
-                  background: 'rgba(255,255,255,0.03)',
-                  border: `1px solid ${allCompleted ? 'rgba(100,210,120,0.3)' : 'rgba(255,255,255,0.07)'}`,
-                  borderRadius: '2px',
-                  padding: '1.25rem',
-                  marginBottom: '1rem',
-                }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <h2 style={{
-                      color: allCompleted ? '#64d278' : '#feeaa5',
-                      fontSize: '0.85rem',
-                      letterSpacing: '0.1em',
-                      margin: 0,
-                      textTransform: 'uppercase',
-                      fontFamily: "'Cinzel', Georgia, serif",
-                    }}>
-                      {node.name}
-                    </h2>
-                    <span style={{
-                      fontSize: '0.65rem',
-                      color: 'rgba(255,255,255,0.25)',
-                      letterSpacing: '0.05em',
-                      fontFamily: "'Cinzel', Georgia, serif",
-                    }}>
-                      {node.node_category}
-                    </span>
-                  </div>
-
-                  {node.content_html && (
-                    <div
-                      style={{ marginTop: '0.75rem', fontSize: '1rem', lineHeight: '1.7', color: '#e8e4dc' }}
-                      dangerouslySetInnerHTML={{ __html: node.content_html }}
-                    />
-                  )}
-
-                  {nodeTargets.length > 0 && (
-                    <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                      {nodeTargets.map((target) => {
-                        const completed = completedTargets.has(target.target_id)
-                        const payload = target.payload as Record<string, unknown> ?? {}
-
-                        return (
-                          <div key={target.target_id} style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: '0.75rem',
-                            padding: '0.5rem 0.75rem',
-                            background: 'rgba(255,255,255,0.02)',
-                            border: '1px solid rgba(255,255,255,0.05)',
-                          }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                              <span style={{ color: completed ? '#64d278' : 'rgba(255,255,255,0.25)', fontSize: '0.9rem' }}>
-                                {completed ? '✓' : '○'}
-                              </span>
-                              <span style={{ fontSize: '0.82rem', color: 'rgba(255,255,255,0.5)', fontFamily: "'Cinzel', Georgia, serif", letterSpacing: '0.04em' }}>
-                                {TARGET_LABELS[target.type as keyof typeof TARGET_LABELS] ?? target.type}
-                              </span>
-                            </div>
-
-                            {/* Azione per target non completati */}
-                            {!completed && (
-                              <>
-                                {(target.type === 'code_entry' || target.type === 'qr_scan') && (
-                                  <a
-                                    href={`/play/${episodeId}/code?targetId=${target.target_id}&nodeId=${node.node_id}`}
-                                    style={{
-                                      fontSize: '0.75rem',
-                                      color: '#e8af48',
-                                      fontFamily: "'Cinzel', Georgia, serif",
-                                      letterSpacing: '0.04em',
-                                      textDecoration: 'none',
-                                      padding: '0.3rem 0.75rem',
-                                      border: '1px solid rgba(232,175,72,0.3)',
-                                      borderRadius: '2px',
-                                      whiteSpace: 'nowrap',
-                                    }}
-                                  >
-                                    {target.type === 'qr_scan' ? 'Scansiona QR' : 'Inserisci codice'}
-                                  </a>
-                                )}
-                                {target.type === 'gps_location' && (
-                                  <a
-                                    href={`/play/${episodeId}/map`}
-                                    style={{
-                                      fontSize: '0.75rem',
-                                      color: '#a5feb8',
-                                      fontFamily: "'Cinzel', Georgia, serif",
-                                      letterSpacing: '0.04em',
-                                      textDecoration: 'none',
-                                      padding: '0.3rem 0.75rem',
-                                      border: '1px solid rgba(165,254,184,0.3)',
-                                      borderRadius: '2px',
-                                      whiteSpace: 'nowrap',
-                                    }}
-                                  >
-                                    Vai alla mappa
-                                  </a>
-                                )}
-                                {target.type === 'claim_item' && (
-                                  <a
-                                    href={`/play/${episodeId}/claim?targetId=${target.target_id}&nodeId=${node.node_id}`}
-                                    style={{
-                                      fontSize: '0.75rem',
-                                      color: '#feeaa5',
-                                      fontFamily: "'Cinzel', Georgia, serif",
-                                      letterSpacing: '0.04em',
-                                      textDecoration: 'none',
-                                      padding: '0.3rem 0.75rem',
-                                      border: '1px solid rgba(254,234,165,0.3)',
-                                      borderRadius: '2px',
-                                      whiteSpace: 'nowrap',
-                                    }}
-                                  >
-                                    Raccogli
-                                  </a>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )
-            })
-          )}
-        </div>
-      )}
-    </main>
-  )
-}
-
-const TARGET_LABELS = {
-  code_entry: 'Codice',
-  qr_scan: 'QR Code',
-  gps_location: 'Posizione GPS',
-  claim_item: 'Raccogli oggetto',
-} as const
-
-async function JoinEpisodeSection({
-  episodeId,
-  playerId,
-}: {
-  episodeId: string
-  playerId: string
-}) {
   async function joinEpisode() {
     'use server'
     const supabase = await createClient()
     await supabase.from('player_episode_stats').insert({
-      player_id: playerId,
+      player_id: player!.player_id,
       episode_id: episodeId,
     })
     const { redirect } = await import('next/navigation')
@@ -278,29 +134,38 @@ async function JoinEpisodeSection({
   }
 
   return (
-    <div style={{
-      margin: '3rem 1.5rem',
-      padding: '2rem',
-      border: '1px solid rgba(254,234,165,0.15)',
-      textAlign: 'center',
-    }}>
-      <p style={{ color: 'rgba(255,255,255,0.5)', marginBottom: '1.5rem', fontFamily: "'EB Garamond', Georgia, serif", fontSize: '1rem' }}>
-        Vuoi partecipare a questo episodio?
-      </p>
-      <form action={joinEpisode}>
-        <button type="submit" style={{
-          background: 'rgba(254,234,165,0.08)',
-          border: '1px solid rgba(254,234,165,0.4)',
-          color: '#feeaa5',
-          padding: '0.75rem 2rem',
-          fontSize: '0.85rem',
-          cursor: 'pointer',
-          fontFamily: "'Cinzel', Georgia, serif",
-          letterSpacing: '0.08em',
-        }}>
-          Entra nell&apos;episodio
-        </button>
-      </form>
-    </div>
+    <EpisodeGameplay
+      episodeId={episodeId}
+      currentUserId={user.id}
+      episode={{
+        name: episode.name,
+        physical_location: episode.physical_location ?? null,
+        start_datetime: episode.start_datetime ?? null,
+      }}
+      player={{
+        player_id: player.player_id,
+        display_name: player.display_name,
+        level: player.level,
+        experience_points: player.experience_points,
+      }}
+      teamId={teamId}
+      teamName={teamName}
+      initialMessages={initialMessages}
+      nodes={(nodes ?? []).map(n => ({
+        node_id: n.node_id,
+        name: n.name,
+        node_category: n.node_category,
+        content_html: n.content_html ?? null,
+        targets: (n.targets ?? []).map((t: { target_id: string; type: string; payload: unknown }) => ({
+          target_id: t.target_id,
+          type: t.type,
+          payload: (t.payload as Record<string, unknown>) ?? null,
+        })),
+      }))}
+      completedTargets={completedTargets}
+      hasJoined={!!stats}
+      onJoin={joinEpisode}
+      inventoryItems={inventoryItems}
+    />
   )
 }

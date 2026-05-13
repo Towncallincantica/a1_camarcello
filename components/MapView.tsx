@@ -29,7 +29,6 @@ export function MapView({ initialLocations, currentUserId, episodeId }: Props) {
     let map: ReturnType<typeof import('leaflet')['map']> | null = null
 
     import('leaflet').then((L) => {
-      // Doppio check dopo l'import asincrono
       if (mapInstanceRef.current) return
       if (!mapRef.current) return
 
@@ -40,10 +39,11 @@ export function MapView({ initialLocations, currentUserId, episodeId }: Props) {
         shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
       })
 
+      // Al mount le locations sono quasi sempre vuote — centro di default
       const self = initialLocations.find((l) => l.user_id === currentUserId)
       const center: [number, number] = self ? [self.lat, self.lng] : [45.5, 12.0]
 
-      map = L.map(mapRef.current, { center, zoom: 17, zoomControl: true })
+      map = L.map(mapRef.current, { center, zoom: 17, zoomControl: false })
       mapInstanceRef.current = map
 
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -95,7 +95,6 @@ export function MapView({ initialLocations, currentUserId, episodeId }: Props) {
         )
         .subscribe()
 
-      // Salva channel per cleanup
       ;(mapInstanceRef.current as unknown as { _channel: unknown })._channel = channel
     })
 
@@ -117,9 +116,55 @@ export function MapView({ initialLocations, currentUserId, episodeId }: Props) {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Ricentra e aggiorna markers quando arrivano nuove posizioni
+  useEffect(() => {
+    console.log('[MapView] initialLocations changed:', initialLocations)
+    console.log('[MapView] currentUserId:', currentUserId)
+
+    const map = mapInstanceRef.current as {
+      setView: (c: [number, number], z: number) => void
+    } | null
+
+    if (!map) {
+      console.log('[MapView] map non ancora montata')
+      return
+    }
+    if (initialLocations.length === 0) {
+      console.log('[MapView] locations vuote, skip')
+      return
+    }
+
+    import('leaflet').then((L) => {
+      const self = initialLocations.find(l => l.user_id === currentUserId)
+      console.log('[MapView] self:', self)
+
+      if (self) {
+        map.setView([self.lat, self.lng], 17)
+      }
+
+      for (const loc of initialLocations) {
+        const isSelf = loc.user_id === currentUserId
+        const existing = markersRef.current.get(loc.user_id) as
+          | ReturnType<typeof L.marker> | undefined
+
+        if (existing) {
+          existing.setLatLng([loc.lat, loc.lng])
+        } else {
+          const marker = L.marker([loc.lat, loc.lng], {
+            icon: L.divIcon({
+              className: '',
+              html: markerHtml(loc.display_name, isSelf),
+              iconAnchor: [16, 16],
+            }),
+          }).addTo(map as unknown as ReturnType<typeof L.map>)
+          markersRef.current.set(loc.user_id, marker)
+        }
+      }
+    })
+  }, [initialLocations, currentUserId])
+
   return (
     <>
-      {/* Leaflet CSS */}
       <link
         rel="stylesheet"
         href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"

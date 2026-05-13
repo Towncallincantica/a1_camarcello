@@ -11,6 +11,14 @@ const rarityColors: Record<string, string> = {
   legendary: '#feeaa5',
 }
 
+const rarityLabels: Record<string, string> = {
+  common: 'Comune',
+  uncommon: 'Non comune',
+  rare: 'Raro',
+  epic: 'Epico',
+  legendary: 'Leggendario',
+}
+
 export default async function ProfilePage({
   params,
 }: {
@@ -38,7 +46,7 @@ export default async function ProfilePage({
   ] = await Promise.all([
     supabase
       .from('player_episode_inventory')
-      .select('quantity, items ( item_id, name, description, rarity, category, is_consumable )')
+      .select('quantity, items ( item_id, name, description, rarity, category, icon_url, is_consumable )')
       .eq('player_id', player.player_id)
       .eq('episode_id', episodeId),
 
@@ -195,7 +203,11 @@ export default async function ProfilePage({
             Inventario
           </h2>
           {inventory && inventory.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: '0.5rem',
+            }}>
               {inventory.map((inv) => {
                 const item = inv.items as unknown as {
                   item_id: string
@@ -203,30 +215,90 @@ export default async function ProfilePage({
                   description: string | null
                   rarity: string
                   category: string | null
+                  icon_url: string | null
                   is_consumable: boolean
                 }
                 if (!item) return null
                 const color = rarityColors[item.rarity] ?? rarityColors.common
                 return (
                   <div key={item.item_id} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '0.75rem 1rem',
+                    position: 'relative',
                     background: 'rgba(255,255,255,0.02)',
-                    border: `1px solid ${color}22`,
+                    border: `1px solid ${color}33`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    padding: '0.75rem 0.5rem 0.6rem',
+                    gap: '0.5rem',
                   }}>
-                    <div>
-                      <span style={{ color, fontSize: '0.9rem' }}>{item.name}</span>
-                      {item.category && (
-                        <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.7rem', marginLeft: '0.5rem' }}>
-                          {item.category}
-                        </span>
+                    {/* Immagine o placeholder */}
+                    <div style={{
+                      width: '56px',
+                      height: '56px',
+                      background: `${color}11`,
+                      border: `1px solid ${color}22`,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                      overflow: 'hidden',
+                    }}>
+                      {item.icon_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={item.icon_url}
+                          alt={item.name}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                      ) : (
+                        <span style={{ color, fontSize: '1.4rem', opacity: 0.5 }}>◈</span>
                       )}
                     </div>
-                    <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.85rem' }}>
+
+                    {/* Nome */}
+                    <div style={{ textAlign: 'center' }}>
+                      <p style={{
+                        color,
+                        fontSize: '0.72rem',
+                        lineHeight: 1.3,
+                        margin: 0,
+                        wordBreak: 'break-word',
+                      }}>
+                        {item.name}
+                      </p>
+                      {item.category && (
+                        <p style={{
+                          color: 'rgba(255,255,255,0.25)',
+                          fontSize: '0.62rem',
+                          margin: '0.15rem 0 0',
+                        }}>
+                          {item.category}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Quantità */}
+                    <span style={{
+                      position: 'absolute',
+                      top: '0.3rem',
+                      right: '0.4rem',
+                      color: 'rgba(255,255,255,0.4)',
+                      fontSize: '0.65rem',
+                    }}>
                       ×{inv.quantity}
                     </span>
+
+                    {/* Rarity dot */}
+                    <span style={{
+                      position: 'absolute',
+                      bottom: '0.3rem',
+                      right: '0.4rem',
+                      width: '5px',
+                      height: '5px',
+                      borderRadius: '50%',
+                      background: color,
+                      opacity: 0.7,
+                    }} />
                   </div>
                 )
               })}

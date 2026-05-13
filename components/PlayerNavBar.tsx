@@ -18,8 +18,8 @@ export function PlayerNavBar({ episodeId, hasMap, hasInventory }: Props) {
 
   const navItems = [
     { label: 'Storia',     icon: '📜', path: '' },
-    ...(hasMap       ? [{ label: 'Mappa',      icon: '🗺️', path: '/map' }]     : []),
-    ...(hasInventory ? [{ label: 'Inventario', icon: '🎒', path: '/combine' }] : []),
+    ...(hasMap       ? [{ label: 'Mappa',      icon: '🗺️', path: '/map' }]       : []),
+    ...(hasInventory ? [{ label: 'Inventario', icon: '🎒', path: '/inventory' }] : []),
     { label: 'Profilo',    icon: '🪬', path: '/profile' },
   ]
 
@@ -111,7 +111,6 @@ export function PlayerNavBar({ episodeId, hasMap, hasInventory }: Props) {
         .qr-btn:active { transform: scale(0.91); }
       `}</style>
 
-      {/* Contenitore fisso che tiene navbar + bottone QR */}
       <div style={{
         position: 'fixed',
         bottom: '1.5rem',

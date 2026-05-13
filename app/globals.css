@@ -71,3 +71,20 @@ a {
 body {
   overscroll-behavior-y: contain;
 }
+/* ── Leaflet: disabilita controlli zoom, abbassa z-index ── */
+.leaflet-control-zoom {
+  display: none !important;
+}
+.leaflet-pane,
+.leaflet-tile,
+.leaflet-marker-icon,
+.leaflet-marker-shadow,
+.leaflet-tile-container,
+.leaflet-pane > svg,
+.leaflet-pane > canvas,
+.leaflet-layer {
+  z-index: 1 !important;
+}
+.leaflet-control-container {
+  z-index: 2 !important;
+}
