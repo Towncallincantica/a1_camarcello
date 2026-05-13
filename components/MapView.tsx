@@ -46,8 +46,7 @@ export function MapView({ initialLocations, currentUserId, episodeId }: Props) {
       map = L.map(mapRef.current, { center, zoom: 17, zoomControl: false })
       mapInstanceRef.current = map
 
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap',
+      L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png', {
         maxZoom: 19,
       }).addTo(map)
 
