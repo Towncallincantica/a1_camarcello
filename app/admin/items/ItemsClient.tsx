@@ -2,6 +2,8 @@
 
 import { useState, useTransition, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { ItemQRCode } from './ItemQRCode'
+
 import { useRouter } from 'next/navigation'
 
 type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary'
@@ -507,6 +509,14 @@ export default function ItemsClient({ initialItems }: { initialItems: Item[] }) 
                 <input type="number" value={form.claim_limit} onChange={e => setForm(f => ({ ...f, claim_limit: e.target.value }))} style={s.input} placeholder="— illimitato" min={1} />
               </div>
             </div>
+            
+{editingItem && (
+  <ItemQRCode
+    itemId={editingItem.item_id}
+    itemName={editingItem.name}
+    rarity={editingItem.rarity}
+  />
+)}
 
             {error && (
               <div style={{ marginBottom: '1rem', padding: '0.6rem 0.9rem', background: 'rgba(255,80,80,0.08)', border: '1px solid rgba(255,80,80,0.2)', borderRadius: '6px', color: '#ff8080', fontSize: '0.85rem' }}>
