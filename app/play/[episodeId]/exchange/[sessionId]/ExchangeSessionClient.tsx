@@ -46,6 +46,7 @@ export function ExchangeSessionClient({
   playerId,
   displayName,
   otherDisplayName,
+  isA,
   status: initialStatus,
   myConfirmed: initialMyConfirmed,
   otherConfirmed: initialOtherConfirmed,
@@ -81,8 +82,8 @@ export function ExchangeSessionClient({
             player_b_confirmed: boolean
           }
           setStatus(s.status)
-          setMyConfirmed(s.player_a_confirmed)
-          setOtherConfirmed(s.player_b_confirmed)
+          setMyConfirmed(isA ? s.player_a_confirmed : s.player_b_confirmed)
+          setOtherConfirmed(isA ? s.player_b_confirmed : s.player_a_confirmed)
 
           if (s.status === 'completed' || s.status === 'cancelled') {
             setTimeout(() => router.push(`/play/${episodeId}`), 1500)
