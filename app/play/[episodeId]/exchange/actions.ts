@@ -4,15 +4,16 @@ import { createServiceRoleClient } from '@/lib/supabase/service'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
-// Avvia una sessione di scambio (player A scansiona player B)
+// Avvia una sessione di scambio — restituisce session_id (redirect gestito dal client)
 export async function initiateExchange(
   episodeId: string,
   playerAId: string,
   playerBId: string
-) {
+): Promise<string> {
   const service = createServiceRoleClient()
 
-  // Verifica che player B sia nell'episodio
+  if (playerAId === playerBId) throw new Error('Non puoi scambiare con te stesso.')
+
   const { data: bStats } = await service
     .from('player_episode_stats')
     .select('player_id')
@@ -20,8 +21,7 @@ export async function initiateExchange(
     .eq('episode_id', episodeId)
     .single()
 
-  if (!bStats) throw new Error('Player non trovato in questo episodio.')
-  if (playerAId === playerBId) throw new Error('Non puoi scambiare con te stesso.')
+  if (!bStats) throw new Error('Giocatore non trovato in questo episodio.')
 
   const { data: session, error } = await service
     .from('exchange_sessions')
@@ -36,7 +36,7 @@ export async function initiateExchange(
 
   if (error) throw new Error(error.message)
 
-  redirect(`/play/${episodeId}/exchange/${session.session_id}`)
+  return session.session_id
 }
 
 // Seleziona l'item da offrire (player A o B)
@@ -103,7 +103,6 @@ export async function confirmExchange(
 
   if (error) throw new Error(error.message)
 
-  // Se entrambi confermati → esegui lo scambio
   if (updated.player_a_confirmed && updated.player_b_confirmed) {
     await executeExchange(
       episodeId,
@@ -148,14 +147,8 @@ async function executeExchange(
   itemBId: string | null,
   service: ReturnType<typeof createServiceRoleClient>
 ) {
-  // Trasferisci item A → B
-  if (itemAId) {
-    await transferItem(episodeId, playerAId, playerBId, itemAId, service)
-  }
-  // Trasferisci item B → A
-  if (itemBId) {
-    await transferItem(episodeId, playerBId, playerAId, itemBId, service)
-  }
+  if (itemAId) await transferItem(episodeId, playerAId, playerBId, itemAId, service)
+  if (itemBId) await transferItem(episodeId, playerBId, playerAId, itemBId, service)
 
   await service
     .from('exchange_sessions')
@@ -170,7 +163,6 @@ async function transferItem(
   itemId: string,
   service: ReturnType<typeof createServiceRoleClient>
 ) {
-  // Rimuovi 1 dal mittente
   const { data: fromInv } = await service
     .from('player_episode_inventory')
     .select('quantity')
@@ -197,7 +189,6 @@ async function transferItem(
       .eq('episode_id', episodeId)
   }
 
-  // Aggiungi 1 al destinatario
   const { data: toInv } = await service
     .from('player_episode_inventory')
     .select('quantity')

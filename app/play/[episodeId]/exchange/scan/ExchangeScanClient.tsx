@@ -16,6 +16,8 @@ export function ExchangeScanClient({ episodeId, playerAId }: Props) {
   const [processing, setProcessing] = useState(false)
   const router = useRouter()
   const scannerInstance = useRef<unknown>(null)
+  const hasScanned = useRef(false)
+  const scannerRunning = useRef(false)
 
   useEffect(() => {
     if (!scannerRef.current || scanning) return
@@ -23,6 +25,7 @@ export function ExchangeScanClient({ episodeId, playerAId }: Props) {
     import('html5-qrcode').then(({ Html5Qrcode }) => {
       const scanner = new Html5Qrcode('exchange-qr-reader')
       scannerInstance.current = scanner
+      scannerRunning.current = true
       setScanning(true)
 
       scanner
@@ -30,26 +33,49 @@ export function ExchangeScanClient({ episodeId, playerAId }: Props) {
           { facingMode: 'environment' },
           { fps: 10, qrbox: { width: 240, height: 240 } },
           async (decodedText) => {
-            if (processing) return
+            // Evita double-fire
+            if (hasScanned.current) return
+            hasScanned.current = true
             setProcessing(true)
 
+            let parsed: { type?: string; player_id?: string } | null = null
             try {
-              const data = JSON.parse(decodedText)
-              if (data.type !== 'player' || !data.player_id) {
-                setError('QR non valido. Scansiona il profilo di un giocatore.')
-                setProcessing(false)
-                return
-              }
-              if (data.player_id === playerAId) {
-                setError('Non puoi scambiare con te stesso.')
-                setProcessing(false)
-                return
-              }
-
-              await scanner.stop()
-              await initiateExchange(episodeId, playerAId, data.player_id)
+              parsed = JSON.parse(decodedText)
             } catch {
               setError('QR non riconosciuto.')
+              hasScanned.current = false
+              setProcessing(false)
+              return
+            }
+
+            if (parsed?.type !== 'player' || !parsed.player_id) {
+              setError('QR non valido. Scansiona il profilo di un giocatore.')
+              hasScanned.current = false
+              setProcessing(false)
+              return
+            }
+            if (parsed.player_id === playerAId) {
+              setError('Non puoi scambiare con te stesso.')
+              hasScanned.current = false
+              setProcessing(false)
+              return
+            }
+
+            // Ferma lo scanner prima di chiamare la server action
+            try {
+              scannerRunning.current = false
+              await scanner.stop()
+            } catch {
+              // già fermo, ignora
+            }
+
+            try {
+              const sessionId = await initiateExchange(episodeId, playerAId, parsed.player_id)
+              router.push(`/play/${episodeId}/exchange/${sessionId}`)
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : 'Errore durante lo scambio.'
+              setError(msg)
+              hasScanned.current = false
               setProcessing(false)
             }
           },
@@ -62,8 +88,11 @@ export function ExchangeScanClient({ episodeId, playerAId }: Props) {
     })
 
     return () => {
-      const s = scannerInstance.current as { stop?: () => Promise<void> } | null
-      s?.stop?.().catch(() => {})
+      if (scannerRunning.current) {
+        scannerRunning.current = false
+        const s = scannerInstance.current as { stop?: () => Promise<void> } | null
+        s?.stop?.().catch(() => {})
+      }
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -81,7 +110,7 @@ export function ExchangeScanClient({ episodeId, playerAId }: Props) {
         <div id="exchange-qr-reader" ref={scannerRef} style={{ width: '100%', height: '100%' }} />
 
         {/* Corner brackets */}
-        {['top-left', 'top-right', 'bottom-left', 'bottom-right'].map((corner) => (
+        {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const).map((corner) => (
           <div key={corner} style={{
             position: 'absolute',
             width: '20px',
@@ -89,9 +118,9 @@ export function ExchangeScanClient({ episodeId, playerAId }: Props) {
             borderColor: '#feeaa5',
             borderStyle: 'solid',
             borderWidth: 0,
-            ...(corner === 'top-left' ? { top: 8, left: 8, borderTopWidth: 2, borderLeftWidth: 2 } : {}),
-            ...(corner === 'top-right' ? { top: 8, right: 8, borderTopWidth: 2, borderRightWidth: 2 } : {}),
-            ...(corner === 'bottom-left' ? { bottom: 8, left: 8, borderBottomWidth: 2, borderLeftWidth: 2 } : {}),
+            ...(corner === 'top-left'     ? { top: 8,    left: 8,  borderTopWidth: 2,    borderLeftWidth: 2  } : {}),
+            ...(corner === 'top-right'    ? { top: 8,    right: 8, borderTopWidth: 2,    borderRightWidth: 2 } : {}),
+            ...(corner === 'bottom-left'  ? { bottom: 8, left: 8,  borderBottomWidth: 2, borderLeftWidth: 2  } : {}),
             ...(corner === 'bottom-right' ? { bottom: 8, right: 8, borderBottomWidth: 2, borderRightWidth: 2 } : {}),
           }} />
         ))}
