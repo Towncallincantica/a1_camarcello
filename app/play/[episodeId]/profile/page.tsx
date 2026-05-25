@@ -307,6 +307,28 @@ export default async function ProfilePage({
           <PlayerQRCode playerId={player.player_id} displayName={player.display_name} />
         </section>
 
+{/* Logout */}
+        <section style={{ paddingTop: '0.5rem' }}>
+          <form method="POST" action="/logout">
+            <button
+              type="submit"
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                background: 'transparent',
+                border: '1px solid rgba(232,85,85,0.25)',
+                color: 'rgba(232,85,85,0.6)',
+                fontFamily: "'Cinzel', Georgia, serif",
+                fontSize: '0.7rem',
+                letterSpacing: '0.12em',
+                cursor: 'pointer',
+              }}
+            >
+              ESCI
+            </button>
+          </form>
+        </section>
+
       </div>
     </main>
   )
