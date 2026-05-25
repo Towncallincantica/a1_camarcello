@@ -43,12 +43,12 @@ export function MapView({ initialLocations, currentUserId, episodeId }: Props) {
       const self = initialLocations.find((l) => l.user_id === currentUserId)
       const center: [number, number] = self ? [self.lat, self.lng] : [45.5, 12.0]
 
-      map = L.map(mapRef.current, { center, zoom: 17, zoomControl: false })
+      map = L.map(mapRef.current, { center, zoom: 17, zoomControl: false, attributionControl: false })
       mapInstanceRef.current = map
 
       L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
         maxZoom: 19,
-        attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
+        attribution: '&copy; incantica',
       }).addTo(map)
 
       for (const loc of initialLocations) {
