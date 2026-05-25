@@ -13,7 +13,7 @@ export default async function EpisodePage({
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const [{ data: episode }, { data: player }] = await Promise.all([
+  const [{ data: episode }, { data: player }, { data: userData }] = await Promise.all([
     supabase
       .from('episodes')
       .select('episode_id, name, physical_location, start_datetime, join_mode')
@@ -26,6 +26,11 @@ export default async function EpisodePage({
       .select('player_id, display_name, level, experience_points')
       .eq('user_id', user.id)
       .eq('adventure_id', ADVENTURE_ID)
+      .single(),
+    supabase
+      .from('users')
+      .select('avatar_url')
+      .eq('user_id', user.id)
       .single(),
   ])
 
@@ -104,6 +109,8 @@ export default async function EpisodePage({
     })
   }
 
+console.log('userData:', userData)
+
   const completedTargets = new Set(
     (progress ?? []).filter(p => p.completed).map(p => p.target_id)
   )
@@ -159,6 +166,7 @@ export default async function EpisodePage({
         display_name: player.display_name,
         level: player.level,
         experience_points: player.experience_points,
+        avatar_url: userData?.avatar_url ?? null,
       }}
       teamId={teamId}
       teamName={teamName}

@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { TeamChat } from './team/TeamChat'
 import { deleteItem } from './actions'
+import { claimItemByQR, type ClaimResult } from './qrActions'
 
 const MapWrapper = dynamic(() => import('./MapWrapper'), { ssr: false })
 
@@ -77,6 +78,7 @@ type Props = {
     display_name: string
     level: number
     experience_points: number
+    avatar_url: string | null
   }
   teamId: string | null
   teamName: string | null
@@ -138,6 +140,8 @@ export default function EpisodeGameplay({
   const [joining, setJoining] = useState(false)
   const [containerH, setContainerH] = useState(700)
   const [qrError, setQrError] = useState<string | null>(null)
+  const [claimedItem, setClaimedItem] = useState<Extract<ClaimResult, { success: true }>['item'] | null>(null)
+  const popupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
   const [popupMode, setPopupMode] = useState<PopupMode | null>(null)
   const [localInventory, setLocalInventory] = useState<InventoryItem[]>(inventoryItems)
@@ -233,7 +237,29 @@ export default function EpisodeGameplay({
         await scanner.start(
           { facingMode: 'environment' },
           { fps: 10, qrbox: { width: 200, height: 200 } },
-          (decodedText) => {
+          async (decodedText) => {
+            let parsed: { type?: string; player_id?: string; item_id?: string } | null = null
+            try { parsed = JSON.parse(decodedText) } catch { /* non JSON */ }
+
+            if (parsed?.type === 'item' && parsed.item_id) {
+              try { if (scanner.isScanning) await scanner.stop(); scanner.clear() } catch {}
+              qrCleanupRef.current = null
+              const result = await claimItemByQR(episodeId, parsed.item_id)
+              if (result.success) {
+                setClaimedItem(result.item)
+                if (popupTimerRef.current) clearTimeout(popupTimerRef.current)
+                popupTimerRef.current = setTimeout(() => setClaimedItem(null), 5000)
+              } else {
+                setQrError(result.error)
+              }
+              return
+            }
+
+            if (parsed?.type === 'player' && parsed.player_id) {
+              window.location.href = `/play/${episodeId}/exchange/scan`
+              return
+            }
+
             window.location.href = `/play/${episodeId}/code?qr=${encodeURIComponent(decodedText)}`
           },
           () => {}
@@ -366,77 +392,75 @@ export default function EpisodeGameplay({
             </p>
           </div>
 
-          {/* Destra: player badge con GPS + team */}
-          <div style={{
-            pointerEvents: 'auto',
-            background: 'rgba(12,11,10,0.88)',
-            border: `1px solid ${C.borderGold}`,
-            borderRadius: 8,
-            padding: '6px 10px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'flex-end',
-            gap: 4,
-            minWidth: 110,
-          }}>
-            {/* Nome + XP */}
+          {/* Destra: player badge clickable con avatar */}
+          <a
+            href={`/play/${episodeId}/profile`}
+            style={{
+              pointerEvents: 'auto',
+              background: 'rgba(12,11,10,0.88)',
+              border: `1px solid ${C.borderGold}`,
+              borderRadius: 8,
+              padding: '6px 10px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              textDecoration: 'none',
+              minWidth: 110,
+            }}
+          >
+            {/* Avatar */}
             <div style={{
-              fontFamily: C.fontCinzel,
-              fontSize: '0.58rem',
-              letterSpacing: '0.06em',
-              color: C.gold,
-              lineHeight: 1,
+              width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
+              border: `1px solid rgba(254,234,165,0.3)`,
+              background: 'rgba(255,255,255,0.05)',
+              overflow: 'hidden',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              {player.display_name}
-              <span style={{ color: C.muted, marginLeft: 5 }}>
-                · {player.experience_points} xp
-              </span>
-            </div>
-
-            {/* GPS + team */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {/* GPS dot */}
-              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{
-                  width: 5, height: 5,
-                  borderRadius: '50%',
-                  background: gpsDotColor,
-                  boxShadow: gpsGlow,
-                  transition: 'background 0.15s, box-shadow 0.15s',
-                  display: 'inline-block',
-                  flexShrink: 0,
-                }} />
-                <span style={{
-                  fontFamily: C.fontCinzel,
-                  fontSize: '0.46rem',
-                  letterSpacing: '0.1em',
-                  color: gpsStatus === 'ok'
-                    ? 'rgba(100,210,120,0.7)'
-                    : gpsStatus === 'error'
-                    ? 'rgba(232,85,85,0.7)'
-                    : C.muted2,
-                  transition: 'color 0.3s',
-                }}>
-                  GPS
-                </span>
-              </span>
-
-              {/* Team */}
-              {teamName && (
-                <>
-                  <span style={{ color: C.muted2, fontSize: '0.5rem' }}>·</span>
-                  <span style={{
-                    fontFamily: C.fontCinzel,
-                    fontSize: '0.46rem',
-                    letterSpacing: '0.08em',
-                    color: 'rgba(254,234,165,0.55)',
-                  }}>
-                    {teamName}
-                  </span>
-                </>
+              {player.avatar_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={player.avatar_url} alt={player.display_name}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <span style={{ fontSize: '0.7rem', color: C.muted2 }}>◈</span>
               )}
             </div>
-          </div>
+
+            {/* Testo */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+              <div style={{
+                fontFamily: C.fontCinzel, fontSize: '0.58rem',
+                letterSpacing: '0.06em', color: C.gold, lineHeight: 1,
+              }}>
+                {player.display_name}
+                <span style={{ color: C.muted, marginLeft: 5 }}>
+                  · {player.experience_points} xp
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{
+                    width: 5, height: 5, borderRadius: '50%',
+                    background: gpsDotColor, boxShadow: gpsGlow,
+                    transition: 'background 0.15s, box-shadow 0.15s',
+                    display: 'inline-block', flexShrink: 0,
+                  }} />
+                  <span style={{
+                    fontFamily: C.fontCinzel, fontSize: '0.46rem', letterSpacing: '0.1em',
+                    color: gpsStatus === 'ok' ? 'rgba(100,210,120,0.7)' : gpsStatus === 'error' ? 'rgba(232,85,85,0.7)' : C.muted2,
+                    transition: 'color 0.3s',
+                  }}>GPS</span>
+                </span>
+                {teamName && (
+                  <>
+                    <span style={{ color: C.muted2, fontSize: '0.5rem' }}>·</span>
+                    <span style={{ fontFamily: C.fontCinzel, fontSize: '0.46rem', letterSpacing: '0.08em', color: 'rgba(254,234,165,0.55)' }}>
+                      {teamName}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          </a>
         </div>
 
         {/* Bottom fade */}
@@ -660,6 +684,64 @@ export default function EpisodeGameplay({
                 </a>
               </div>
             )}
+
+            {/* ── POPUP ITEM RACCOLTO ─────────────────────────────────────── */}
+            {claimedItem && (() => {
+              const rColor = rarityColors[claimedItem.rarity ?? 'common'] ?? C.muted
+              return (
+                <div style={{
+                  position: 'fixed', inset: 0, zIndex: 300,
+                  background: 'rgba(0,0,0,0.82)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem',
+                }} onClick={() => setClaimedItem(null)}>
+                  <style>{`
+                    @keyframes itemFadeIn { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+                    @keyframes drainBar { from { width:100%; } to { width:0%; } }
+                  `}</style>
+                  <div onClick={e => e.stopPropagation()} style={{
+                    background: '#111009', border: `1px solid ${rColor}55`,
+                    boxShadow: `0 0 32px ${rColor}22`, borderRadius: 12,
+                    padding: '2rem 1.5rem', width: '100%', maxWidth: 300,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem',
+                    animation: 'itemFadeIn 0.3s ease',
+                  }}>
+                    <div style={{
+                      width: 110, height: 110,
+                      border: `1px solid ${rColor}55`, boxShadow: `0 0 20px ${rColor}33`,
+                      background: 'rgba(255,255,255,0.02)', borderRadius: 8,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+                    }}>
+                      {claimedItem.image_url || claimedItem.icon_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={claimedItem.image_url ?? claimedItem.icon_url ?? ''}
+                          alt={claimedItem.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        <span style={{ fontSize: '2.5rem', color: rColor, opacity: 0.4 }}>◈</span>
+                      )}
+                    </div>
+                    <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <span style={{ fontFamily: C.fontCinzel, fontSize: '0.55rem', letterSpacing: '0.14em', color: rColor, textTransform: 'uppercase' }}>
+                        {claimedItem.rarity}
+                      </span>
+                      <span style={{ fontFamily: C.fontCinzel, fontSize: '1rem', color: C.gold }}>
+                        {claimedItem.name}
+                      </span>
+                      {claimedItem.description && (
+                        <span style={{ fontFamily: C.fontGaramond, fontSize: '0.85rem', color: C.muted, lineHeight: 1.5 }}>
+                          {claimedItem.description}
+                        </span>
+                      )}
+                    </div>
+                    <span style={{ fontFamily: C.fontCinzel, fontSize: '0.48rem', letterSpacing: '0.12em', color: C.muted2 }}>
+                      AGGIUNTO ALL'INVENTARIO
+                    </span>
+                    <div style={{ width: '100%', height: 2, background: 'rgba(255,255,255,0.07)', borderRadius: 1, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', background: rColor, animation: 'drainBar 5s linear forwards' }} />
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* TAB: BORSA */}
             {activeTab === 'borsa' && (

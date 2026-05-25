@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { ADVENTURE_ID } from '@/lib/constants'
 import { PlayerQRCode } from '@/components/PlayerQRCode'
+import { AvatarUpload } from './AvatarUpload'
 
 const rarityColors: Record<string, string> = {
   common: 'rgba(255,255,255,0.5)',
@@ -30,13 +31,23 @@ export default async function ProfilePage({
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const { data: player } = await supabase
-    .from('player')
-    .select('player_id, display_name, level, experience_points, created_at')
-    .eq('user_id', user.id)
-    .eq('adventure_id', ADVENTURE_ID)
-    .single()
+  // Carica player + avatar_url dall'utente
+  const [{ data: player }, { data: userData }] = await Promise.all([
+    supabase
+      .from('player')
+      .select('player_id, display_name, level, experience_points, created_at')
+      .eq('user_id', user.id)
+      .eq('adventure_id', ADVENTURE_ID)
+      .single(),
+    supabase
+      .from('users')
+      .select('avatar_url')
+      .eq('user_id', user.id)
+      .single(),
+  ])
   if (!player) redirect('/play')
+
+  const avatarUrl = userData?.avatar_url ?? null
 
   const [
     { data: inventory },
@@ -49,18 +60,15 @@ export default async function ProfilePage({
       .select('quantity, items ( item_id, name, description, rarity, category, icon_url, is_consumable )')
       .eq('player_id', player.player_id)
       .eq('episode_id', episodeId),
-
     supabase
       .from('player_status_effects')
       .select('status_effect_id, status_type, applied_at, expires_at')
       .eq('player_id', player.player_id)
       .eq('episode_id', episodeId),
-
     supabase
       .from('player_achievements')
       .select('unlocked_at, achievements ( name, description, achievement_type )')
       .eq('player_id', player.player_id),
-
     supabase
       .from('player_steps')
       .select('progress_item_id')
@@ -101,28 +109,32 @@ export default async function ProfilePage({
 
       <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
 
-        {/* Stats */}
+        {/* Avatar + Stats */}
         <section>
           <div style={{
             display: 'flex',
-            alignItems: 'flex-end',
-            justifyContent: 'space-between',
-            marginBottom: '1rem',
+            alignItems: 'center',
+            gap: '1.25rem',
+            marginBottom: '1.25rem',
           }}>
-            <div>
-              <h1 style={{ color: '#feeaa5', fontSize: '1.3rem', letterSpacing: '0.05em', margin: 0 }}>
+            {/* Avatar upload */}
+            <AvatarUpload userId={user.id} currentAvatarUrl={avatarUrl} />
+
+            {/* Nome + livello */}
+            <div style={{ flex: 1 }}>
+              <h1 style={{ color: '#feeaa5', fontSize: '1.2rem', letterSpacing: '0.05em', margin: 0 }}>
                 {player.display_name}
               </h1>
-              <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '0.75rem', margin: '0.25rem 0 0' }}>
+              <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '0.72rem', margin: '0.2rem 0 0.6rem' }}>
                 Dal {new Date(player.created_at).toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' })}
               </p>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ color: '#feeaa5', fontSize: '1.4rem', fontWeight: 'bold' }}>
-                Lv {player.level}
-              </div>
-              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.75rem' }}>
-                {player.experience_points} XP
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+                <span style={{ color: '#feeaa5', fontSize: '1.3rem', fontWeight: 'bold' }}>
+                  Lv {player.level}
+                </span>
+                <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.75rem' }}>
+                  {player.experience_points} XP
+                </span>
               </div>
             </div>
           </div>
@@ -133,6 +145,7 @@ export default async function ProfilePage({
             background: 'rgba(255,255,255,0.07)',
             borderRadius: '999px',
             overflow: 'hidden',
+            marginBottom: '1rem',
           }}>
             <div style={{
               height: '100%',
@@ -143,11 +156,11 @@ export default async function ProfilePage({
             }} />
           </div>
 
+          {/* Contatori */}
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(3, 1fr)',
             gap: '0.75rem',
-            marginTop: '1rem',
           }}>
             {[
               { label: 'Nodi completati', value: steps?.length ?? 0 },
@@ -203,20 +216,11 @@ export default async function ProfilePage({
             Inventario
           </h2>
           {inventory && inventory.length > 0 ? (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
-              gap: '0.5rem',
-            }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
               {inventory.map((inv) => {
                 const item = inv.items as unknown as {
-                  item_id: string
-                  name: string
-                  description: string | null
-                  rarity: string
-                  category: string | null
-                  icon_url: string | null
-                  is_consumable: boolean
+                  item_id: string; name: string; description: string | null
+                  rarity: string; category: string | null; icon_url: string | null; is_consumable: boolean
                 }
                 if (!item) return null
                 const color = rarityColors[item.rarity] ?? rarityColors.common
@@ -225,88 +229,40 @@ export default async function ProfilePage({
                     position: 'relative',
                     background: 'rgba(255,255,255,0.02)',
                     border: `1px solid ${color}33`,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    padding: '0.75rem 0.5rem 0.6rem',
-                    gap: '0.5rem',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center',
+                    padding: '0.75rem 0.5rem 0.6rem', gap: '0.5rem',
                   }}>
-                    {/* Immagine o placeholder */}
                     <div style={{
-                      width: '56px',
-                      height: '56px',
-                      background: `${color}11`,
-                      border: `1px solid ${color}22`,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      flexShrink: 0,
+                      width: 56, height: 56,
+                      background: `${color}11`, border: `1px solid ${color}22`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
                       overflow: 'hidden',
                     }}>
                       {item.icon_url ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={item.icon_url}
-                          alt={item.name}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        />
+                        <img src={item.icon_url} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       ) : (
                         <span style={{ color, fontSize: '1.4rem', opacity: 0.5 }}>◈</span>
                       )}
                     </div>
-
-                    {/* Nome */}
-                    <div style={{ textAlign: 'center' }}>
-                      <p style={{
-                        color,
-                        fontSize: '0.72rem',
-                        lineHeight: 1.3,
-                        margin: 0,
-                        wordBreak: 'break-word',
-                      }}>
-                        {item.name}
+                    <p style={{ color, fontSize: '0.72rem', lineHeight: 1.3, margin: 0, textAlign: 'center', wordBreak: 'break-word' }}>
+                      {item.name}
+                    </p>
+                    {item.category && (
+                      <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '0.62rem', margin: 0 }}>
+                        {item.category}
                       </p>
-                      {item.category && (
-                        <p style={{
-                          color: 'rgba(255,255,255,0.25)',
-                          fontSize: '0.62rem',
-                          margin: '0.15rem 0 0',
-                        }}>
-                          {item.category}
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Quantità */}
-                    <span style={{
-                      position: 'absolute',
-                      top: '0.3rem',
-                      right: '0.4rem',
-                      color: 'rgba(255,255,255,0.4)',
-                      fontSize: '0.65rem',
-                    }}>
+                    )}
+                    <span style={{ position: 'absolute', top: '0.3rem', right: '0.4rem', color: 'rgba(255,255,255,0.4)', fontSize: '0.65rem' }}>
                       ×{inv.quantity}
                     </span>
-
-                    {/* Rarity dot */}
-                    <span style={{
-                      position: 'absolute',
-                      bottom: '0.3rem',
-                      right: '0.4rem',
-                      width: '5px',
-                      height: '5px',
-                      borderRadius: '50%',
-                      background: color,
-                      opacity: 0.7,
-                    }} />
+                    <span style={{ position: 'absolute', bottom: '0.3rem', right: '0.4rem', width: 5, height: 5, borderRadius: '50%', background: color, opacity: 0.7 }} />
                   </div>
                 )
               })}
             </div>
           ) : (
-            <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '0.85rem' }}>
-              Nessun oggetto ancora.
-            </p>
+            <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '0.85rem' }}>Nessun oggetto ancora.</p>
           )}
         </section>
 
@@ -318,27 +274,19 @@ export default async function ProfilePage({
             </h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               {achievements.map((pa) => {
-                const ach = pa.achievements as unknown as {
-                  name: string
-                  description: string | null
-                  achievement_type: string
-                }
+                const ach = pa.achievements as unknown as { name: string; description: string | null; achievement_type: string }
                 if (!ach) return null
                 return (
                   <div key={pa.unlocked_at} style={{
                     padding: '0.75rem 1rem',
                     background: 'rgba(255,255,255,0.02)',
                     border: '1px solid rgba(255,255,255,0.07)',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                   }}>
                     <div>
                       <span style={{ color: '#feeaa5', fontSize: '0.85rem' }}>{ach.name}</span>
                       {ach.description && (
-                        <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '0.75rem', margin: '0.2rem 0 0' }}>
-                          {ach.description}
-                        </p>
+                        <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '0.75rem', margin: '0.2rem 0 0' }}>{ach.description}</p>
                       )}
                     </div>
                     <span style={{ color: 'rgba(255,255,255,0.25)', fontSize: '0.7rem' }}>
@@ -356,10 +304,7 @@ export default async function ProfilePage({
           <h2 style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.7rem', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.75rem' }}>
             Il tuo QR
           </h2>
-          <PlayerQRCode
-            playerId={player.player_id}
-            displayName={player.display_name}
-          />
+          <PlayerQRCode playerId={player.player_id} displayName={player.display_name} />
         </section>
 
       </div>
