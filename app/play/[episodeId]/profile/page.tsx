@@ -324,7 +324,7 @@ export default async function ProfilePage({
                 cursor: 'pointer',
               }}
             >
-              ESCI
+              ESCI DAL PROFILO - LOGOUT
             </button>
           </form>
         </section>
