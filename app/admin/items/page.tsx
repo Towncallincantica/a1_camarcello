@@ -7,7 +7,12 @@ export default async function ItemsPage() {
 
   const { data: items, error } = await supabase
     .from('items')
-    .select('item_id, name, description, category, rarity, is_stackable, is_consumable, max_stack, claim_code, claim_limit, icon_url, custom_data')
+    .select(`
+      item_id, name, description, category, rarity,
+      is_stackable, is_consumable, is_transferable,
+      max_stack, claim_code, claim_limit, claim_limit_per_player,
+      uniqueness_scope, icon_url, weight, tags, effect_data, custom_data
+    `)
     .eq('adventure_id', ADVENTURE_ID)
     .order('name', { ascending: true })
 

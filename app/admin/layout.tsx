@@ -29,11 +29,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </div>
         <ul style={{ listStyle: 'none', padding: '1rem 0', margin: 0 }}>
           {[
-            { href: '/admin', label: 'Dashboard' },
-            { href: '/admin/episodes', label: 'Episodi' },
-            { href: '/admin/nodes', label: 'Nodi' },
-            { href: '/admin/items', label: 'Oggetti' },
-            { href: '/admin/players', label: 'Giocatori' },
+            { href: '/admin',              label: 'Dashboard' },
+            { href: '/admin/episodes',     label: 'Episodi' },
+            { href: '/admin/items',        label: 'Oggetti' },
+            { href: '/admin/combinations', label: 'Combinazioni' },
+            { href: '/admin/markers',      label: 'Marker mappa' },
+            { href: '/admin/players',      label: 'Giocatori' },
           ].map(({ href, label }) => (
             <li key={href}>
               <a href={href} style={{

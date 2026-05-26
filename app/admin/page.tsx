@@ -7,20 +7,20 @@ export default async function AdminDashboard() {
   const [
     { count: playerCount },
     { count: episodeCount },
-    { count: nodeCount },
     { count: itemCount },
+    { count: recipeCount },
   ] = await Promise.all([
     supabase.from('player').select('*', { count: 'exact', head: true }).eq('adventure_id', ADVENTURE_ID),
     supabase.from('episodes').select('*', { count: 'exact', head: true }).eq('adventure_id', ADVENTURE_ID),
-    supabase.from('content_nodes').select('*', { count: 'exact', head: true }),
     supabase.from('items').select('*', { count: 'exact', head: true }).eq('adventure_id', ADVENTURE_ID),
+    supabase.from('combination_recipes').select('*', { count: 'exact', head: true }).eq('adventure_id', ADVENTURE_ID),
   ])
 
   const stats = [
-    { label: 'Giocatori', value: playerCount ?? 0 },
-    { label: 'Episodi', value: episodeCount ?? 0 },
-    { label: 'Nodi', value: nodeCount ?? 0 },
-    { label: 'Oggetti', value: itemCount ?? 0 },
+    { label: 'Giocatori',     value: playerCount  ?? 0 },
+    { label: 'Episodi',       value: episodeCount ?? 0 },
+    { label: 'Oggetti',       value: itemCount    ?? 0 },
+    { label: 'Combinazioni',  value: recipeCount  ?? 0 },
   ]
 
   return (

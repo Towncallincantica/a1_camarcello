@@ -578,17 +578,24 @@ export type Database = {
           category: string | null
           claim_code: string | null
           claim_limit: number | null
+          claim_limit_per_player: number | null
           created_at: string
           custom_data: Json
           description: string | null
+          effect_data: Json
           episode_id: string | null
           icon_url: string | null
+          image_url: string | null
           is_consumable: boolean
           is_stackable: boolean
+          is_transferable: boolean
           item_id: string
           max_stack: number
           name: string
           rarity: Database["public"]["Enums"]["item_rarity"]
+          tags: string[]
+          uniqueness_scope: Database["public"]["Enums"]["item_uniqueness_scope"]
+          weight: number | null
         }
         Insert: {
           adventure_id?: string | null
@@ -596,17 +603,24 @@ export type Database = {
           category?: string | null
           claim_code?: string | null
           claim_limit?: number | null
+          claim_limit_per_player?: number | null
           created_at?: string
           custom_data?: Json
           description?: string | null
+          effect_data?: Json
           episode_id?: string | null
           icon_url?: string | null
+          image_url?: string | null
           is_consumable?: boolean
           is_stackable?: boolean
+          is_transferable?: boolean
           item_id?: string
           max_stack?: number
           name: string
           rarity?: Database["public"]["Enums"]["item_rarity"]
+          tags?: string[]
+          uniqueness_scope?: Database["public"]["Enums"]["item_uniqueness_scope"]
+          weight?: number | null
         }
         Update: {
           adventure_id?: string | null
@@ -614,17 +628,24 @@ export type Database = {
           category?: string | null
           claim_code?: string | null
           claim_limit?: number | null
+          claim_limit_per_player?: number | null
           created_at?: string
           custom_data?: Json
           description?: string | null
+          effect_data?: Json
           episode_id?: string | null
           icon_url?: string | null
+          image_url?: string | null
           is_consumable?: boolean
           is_stackable?: boolean
+          is_transferable?: boolean
           item_id?: string
           max_stack?: number
           name?: string
           rarity?: Database["public"]["Enums"]["item_rarity"]
+          tags?: string[]
+          uniqueness_scope?: Database["public"]["Enums"]["item_uniqueness_scope"]
+          weight?: number | null
         }
         Relationships: [
           {
@@ -1275,6 +1296,7 @@ export type Database = {
       }
       users: {
         Row: {
+          avatar_url: string | null
           created_at: string
           email: string
           is_admin: boolean
@@ -1283,6 +1305,7 @@ export type Database = {
           username: string | null
         }
         Insert: {
+          avatar_url?: string | null
           created_at?: string
           email: string
           is_admin?: boolean
@@ -1291,6 +1314,7 @@ export type Database = {
           username?: string | null
         }
         Update: {
+          avatar_url?: string | null
           created_at?: string
           email?: string
           is_admin?: boolean
@@ -1604,6 +1628,23 @@ export type Database = {
         Returns: boolean
       }
       geomfromewkt: { Args: { "": string }; Returns: unknown }
+      get_episode_player_locations: {
+        Args: { p_episode_id: string }
+        Returns: {
+          display_name: string
+          lat: number
+          lng: number
+          user_id: string
+        }[]
+      }
+      get_player_locations: {
+        Args: { p_player_ids: string[] }
+        Returns: {
+          lat: number
+          lng: number
+          user_id: string
+        }[]
+      }
       gettransactionid: { Args: never; Returns: unknown }
       longtransactionsenabled: { Args: never; Returns: boolean }
       populate_geometry_columns:
@@ -2249,6 +2290,12 @@ export type Database = {
       adventure_type: "live_event" | "persistent" | "hybrid"
       exchange_status: "pending" | "completed" | "cancelled" | "expired"
       item_rarity: "common" | "uncommon" | "rare" | "epic" | "legendary"
+      item_uniqueness_scope:
+        | "none"
+        | "per_player"
+        | "per_episode"
+        | "per_adventure"
+        | "global"
       node_category:
         | "main_story"
         | "side_quest"
@@ -2401,6 +2448,13 @@ export const Constants = {
       adventure_type: ["live_event", "persistent", "hybrid"],
       exchange_status: ["pending", "completed", "cancelled", "expired"],
       item_rarity: ["common", "uncommon", "rare", "epic", "legendary"],
+      item_uniqueness_scope: [
+        "none",
+        "per_player",
+        "per_episode",
+        "per_adventure",
+        "global",
+      ],
       node_category: [
         "main_story",
         "side_quest",

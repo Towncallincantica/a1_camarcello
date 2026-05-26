@@ -354,7 +354,13 @@ export default function EpisodeGameplay({
         transition: isDragging ? 'none' : 'height 0.32s cubic-bezier(0.32,0.72,0,1)',
         overflow: 'hidden',
       }}>
-        <MapWrapper episodeId={episodeId} currentUserId={currentUserId} />
+        <MapWrapper
+          episodeId={episodeId}
+          currentUserId={currentUserId}
+          playerId={player.player_id}
+          playerLevel={player.level}
+          teamMemberIds={teamId ? [teamId] : []}
+        />
 
         {/* Top bar sovrapposta */}
         <div style={{
