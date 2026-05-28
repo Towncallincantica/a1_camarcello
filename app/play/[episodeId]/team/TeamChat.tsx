@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo, useTransition } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 interface Message {
@@ -23,9 +23,11 @@ interface Props {
 export function TeamChat({ teamId, episodeId, playerId, displayName, initialMessages, onNewMessage }: Props) {
   const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [text, setText] = useState('')
-  const [isPending, startTransition] = useTransition()
+  const [sending, setSending] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const supabase = useMemo(() => createClient(), [])
+  // Cache display_name per player_id già risolti
+  const nameCache = useRef<Record<string, string>>({ [playerId]: displayName })
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -52,36 +54,26 @@ export function TeamChat({ teamId, episodeId, playerId, displayName, initialMess
             player_id: string
           }
 
-          // Evita duplicati (il mittente ha già il messaggio in stato via optimistic)
-          setMessages((prev) => {
-            if (prev.some((m) => m.message_id === msg.message_id)) return prev
-            return [...prev, {
-              ...msg,
-              player: msg.player_id === playerId
-                ? { display_name: displayName }
-                : { display_name: '...' },
-            }]
-          })
+          const isOwn = msg.player_id === playerId
 
-          // Se il messaggio è di un altro player, recupera il display_name reale
-          if (msg.player_id !== playerId) {
-            onNewMessage?.()
+          // Risolvi display_name dalla cache o fetch
+          let resolvedName = nameCache.current[msg.player_id]
+          if (!resolvedName) {
             const { data } = await supabase
               .from('player')
               .select('display_name')
               .eq('player_id', msg.player_id)
               .single()
-
-            if (data?.display_name) {
-              setMessages((prev) =>
-                prev.map(m =>
-                  m.message_id === msg.message_id
-                    ? { ...m, player: { display_name: data.display_name } }
-                    : m
-                )
-              )
-            }
+            resolvedName = data?.display_name ?? '?'
+            nameCache.current[msg.player_id] = resolvedName
           }
+
+          setMessages(prev => {
+            if (prev.some(m => m.message_id === msg.message_id)) return prev
+            return [...prev, { ...msg, player: { display_name: resolvedName } }]
+          })
+
+          if (!isOwn) onNewMessage?.()
         }
       )
       .subscribe()
@@ -89,30 +81,20 @@ export function TeamChat({ teamId, episodeId, playerId, displayName, initialMess
     return () => { supabase.removeChannel(channel) }
   }, [supabase, teamId, playerId, displayName])
 
-  function handleSend(e: React.FormEvent) {
+  async function handleSend(e: React.FormEvent) {
     e.preventDefault()
     const content = text.trim()
-    if (!content) return
+    if (!content || sending) return
 
-    // Ottimistic update
-    const optimistic: Message = {
-      message_id: crypto.randomUUID(),
-      content,
-      created_at: new Date().toISOString(),
-      player_id: playerId,
-      player: { display_name: displayName },
-    }
-    setMessages((prev) => [...prev, optimistic])
     setText('')
-
-    startTransition(async () => {
-      await supabase.from('team_messages').insert({
-        team_id: teamId,
-        episode_id: episodeId,
-        player_id: playerId,
-        content,
-      })
+    setSending(true)
+    await supabase.from('team_messages').insert({
+      team_id: teamId,
+      episode_id: episodeId,
+      player_id: playerId,
+      content,
     })
+    setSending(false)
   }
 
   return (
@@ -199,7 +181,7 @@ export function TeamChat({ teamId, episodeId, playerId, displayName, initialMess
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Messaggio..."
-          disabled={isPending}
+          disabled={sending}
           style={{
             flex: 1,
             background: 'rgba(255,255,255,0.03)',
@@ -214,7 +196,7 @@ export function TeamChat({ teamId, episodeId, playerId, displayName, initialMess
         />
         <button
           type="submit"
-          disabled={isPending || !text.trim()}
+          disabled={sending || !text.trim()}
           style={{
             background: 'rgba(254,234,165,0.08)',
             border: '1px solid rgba(254,234,165,0.25)',
