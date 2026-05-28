@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { ADVENTURE_ID } from '@/lib/constants'
 import { TeamChat } from './TeamChat'
-import { createTeam, joinTeam } from './actions'
+import { createTeam, joinTeam, leaveTeam } from './actions'
 
 export default async function TeamPage({
   params,
@@ -52,9 +52,8 @@ export default async function TeamPage({
 
     teamId
       ? supabase
-          .from('player_episode_stats')
+          .from('team_members')
           .select('player_id, player:player_id ( display_name )')
-          .eq('episode_id', episodeId)
           .eq('team_id', teamId)
       : Promise.resolve({ data: [] }),
   ])
@@ -69,6 +68,7 @@ export default async function TeamPage({
 
   const createTeamWithIds = createTeam.bind(null, episodeId, player.player_id)
   const joinTeamWithIds = joinTeam.bind(null, episodeId, player.player_id)
+  const leaveTeamWithIds = leaveTeam.bind(null, episodeId, player.player_id)
 
   return (
     <main style={{
@@ -94,9 +94,25 @@ export default async function TeamPage({
         >
           ← Storia
         </a>
-        <span style={{ color: '#feeaa5', fontSize: '0.85rem', letterSpacing: '0.06em' }}>
+        <span style={{ color: '#feeaa5', fontSize: '0.85rem', letterSpacing: '0.06em', flex: 1 }}>
           {teamData.data ? teamData.data.name : 'Team'}
         </span>
+        {teamId && (
+          <form action={leaveTeamWithIds}>
+            <button type="submit" style={{
+              background: 'transparent',
+              border: '1px solid rgba(232,85,85,0.25)',
+              color: 'rgba(232,85,85,0.6)',
+              padding: '0.35rem 0.75rem',
+              fontFamily: 'Georgia, serif',
+              fontSize: '0.72rem',
+              cursor: 'pointer',
+              letterSpacing: '0.04em',
+            }}>
+              Lascia
+            </button>
+          </form>
+        )}
       </div>
 
       {/* Nessun team — crea o unisciti */}

@@ -20,11 +20,16 @@ export async function createTeam(
 
   if (error) throw new Error(error.message)
 
-  await supabase
-    .from('player_episode_stats')
-    .update({ team_id: team.team_id })
-    .eq('player_id', playerId)
-    .eq('episode_id', episodeId)
+  await Promise.all([
+    supabase
+      .from('player_episode_stats')
+      .update({ team_id: team.team_id })
+      .eq('player_id', playerId)
+      .eq('episode_id', episodeId),
+    supabase
+      .from('team_members')
+      .insert({ team_id: team.team_id, player_id: playerId }),
+  ])
 
   revalidatePath(`/play/${episodeId}/team`)
   redirect(`/play/${episodeId}/team`)
@@ -38,13 +43,48 @@ export async function joinTeam(
   const supabase = await createClient()
   const teamId = formData.get('team_id') as string
 
-  const { error } = await supabase
+  await Promise.all([
+    supabase
+      .from('player_episode_stats')
+      .update({ team_id: teamId })
+      .eq('player_id', playerId)
+      .eq('episode_id', episodeId),
+    supabase
+      .from('team_members')
+      .insert({ team_id: teamId, player_id: playerId }),
+  ])
+
+  revalidatePath(`/play/${episodeId}/team`)
+  redirect(`/play/${episodeId}/team`)
+}
+
+export async function leaveTeam(
+  episodeId: string,
+  playerId: string,
+) {
+  const supabase = await createClient()
+
+  const { data: stats } = await supabase
     .from('player_episode_stats')
-    .update({ team_id: teamId })
+    .select('team_id')
     .eq('player_id', playerId)
     .eq('episode_id', episodeId)
+    .single()
 
-  if (error) throw new Error(error.message)
+  if (!stats?.team_id) return
+
+  await Promise.all([
+    supabase
+      .from('team_members')
+      .delete()
+      .eq('team_id', stats.team_id)
+      .eq('player_id', playerId),
+    supabase
+      .from('player_episode_stats')
+      .update({ team_id: null })
+      .eq('player_id', playerId)
+      .eq('episode_id', episodeId),
+  ])
 
   revalidatePath(`/play/${episodeId}/team`)
   redirect(`/play/${episodeId}/team`)
