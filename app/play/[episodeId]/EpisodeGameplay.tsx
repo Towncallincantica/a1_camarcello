@@ -864,16 +864,51 @@ export default function EpisodeGameplay({
                     </a>
                   </div>
                 ) : (
-                  <TeamChat
-                    teamId={teamId}
-                    episodeId={episodeId}
-                    playerId={player.player_id}
-                    displayName={player.display_name}
-                    initialMessages={initialMessages}
-                    onNewMessage={() => {
-                      if (activeTab !== 'squadra') setUnreadCount(c => c + 1)
-                    }}
-                  />
+                  <>
+                    {/* Header squadra con nome team e bottone lascia */}
+                    <div style={{
+                      flexShrink: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 14px',
+                      borderBottom: `1px solid ${C.border}`,
+                    }}>
+                      <span style={{
+                        fontFamily: C.fontCinzel,
+                        fontSize: '0.6rem',
+                        letterSpacing: '0.1em',
+                        color: C.gold,
+                      }}>
+                        {teamName ?? 'Squadra'}
+                      </span>
+                      <a
+                        href={`/play/${episodeId}/team`}
+                        style={{
+                          fontFamily: C.fontCinzel,
+                          fontSize: '0.52rem',
+                          letterSpacing: '0.06em',
+                          color: 'rgba(232,85,85,0.6)',
+                          border: '1px solid rgba(232,85,85,0.2)',
+                          borderRadius: 3,
+                          padding: '3px 8px',
+                          textDecoration: 'none',
+                        }}
+                      >
+                        Apri Chat di Squadra
+                      </a>
+                    </div>
+                    <TeamChat
+                      teamId={teamId}
+                      episodeId={episodeId}
+                      playerId={player.player_id}
+                      displayName={player.display_name}
+                      initialMessages={initialMessages}
+                      onNewMessage={() => {
+                        if (activeTab !== 'squadra') setUnreadCount(c => c + 1)
+                      }}
+                    />
+                  </>
                 )}
               </div>
             )}
