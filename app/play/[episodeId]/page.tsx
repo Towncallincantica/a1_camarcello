@@ -109,7 +109,12 @@ export default async function EpisodePage({
     })
   }
 
-console.log('userData:', userData)
+  // Annunci episodio
+  const { data: announcements } = await supabase
+    .from('episode_announcements')
+    .select('announcement_id, content, created_at')
+    .eq('episode_id', episodeId)
+    .order('created_at', { ascending: true })
 
   const completedTargets = new Set(
     (progress ?? []).filter(p => p.completed).map(p => p.target_id)
@@ -171,6 +176,7 @@ console.log('userData:', userData)
       teamId={teamId}
       teamName={teamName}
       initialMessages={initialMessages}
+      initialAnnouncements={announcements ?? []}
       nodes={(nodes ?? []).map(n => ({
         node_id: n.node_id,
         name: n.name,

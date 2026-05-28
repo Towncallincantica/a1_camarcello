@@ -1,11 +1,12 @@
 'use client'
 
-import { useRef, useState, useEffect, useCallback, useTransition } from 'react'
+import { useRef, useState, useEffect, useTransition, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { TeamChat } from './team/TeamChat'
 import { deleteItem } from './actions'
 import { claimItemByQR, type ClaimResult } from './qrActions'
+import { createClient } from '@/lib/supabase/client'
 
 const MapWrapper = dynamic(() => import('./MapWrapper'), { ssr: false })
 
@@ -63,6 +64,12 @@ type ChatMessage = {
   player: { display_name: string } | null
 }
 
+type Announcement = {
+  announcement_id: string
+  content: string
+  created_at: string
+}
+
 type ActiveTab = 'missioni' | 'qr' | 'borsa' | 'squadra'
 
 type Props = {
@@ -83,6 +90,7 @@ type Props = {
   teamId: string | null
   teamName: string | null
   initialMessages: ChatMessage[]
+  initialAnnouncements: Announcement[]
   nodes: ContentNode[]
   completedTargets: Set<string>
   hasJoined: boolean
@@ -99,8 +107,6 @@ const TARGET_LABELS: Record<string, string> = {
   claim_item: 'Raccogli oggetto',
 }
 
-const SHEET_DEFAULT = 220
-const SHEET_EXPANDED = 480
 
 const C = {
   bg: '#090807',
@@ -128,17 +134,25 @@ export default function EpisodeGameplay({
   teamId,
   teamName,
   initialMessages,
+  initialAnnouncements,
   nodes,
   completedTargets,
   hasJoined,
   onJoin,
   inventoryItems = [],
 }: Props) {
-  const [sheetHeight, setSheetHeight] = useState(SHEET_DEFAULT)
-  const [isDragging, setIsDragging] = useState(false)
+  const [tabOpen, setTabOpen] = useState(false)
+  const [tabClosing, setTabClosing] = useState(false)
   const [activeTab, setActiveTab] = useState<ActiveTab>('missioni')
+
+  const closeTab = () => {
+    setTabClosing(true)
+    setTimeout(() => {
+      setTabOpen(false)
+      setTabClosing(false)
+    }, 280)
+  }
   const [joining, setJoining] = useState(false)
-  const [containerH, setContainerH] = useState(700)
   const [qrError, setQrError] = useState<string | null>(null)
   const [claimedItem, setClaimedItem] = useState<Extract<ClaimResult, { success: true }>['item'] | null>(null)
   const popupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -147,23 +161,16 @@ export default function EpisodeGameplay({
   const [localInventory, setLocalInventory] = useState<InventoryItem[]>(inventoryItems)
   const [isDeleting, startDeleteTransition] = useTransition()
   const [unreadCount, setUnreadCount] = useState(0)
+  const [announcements, setAnnouncements] = useState<Announcement[]>(initialAnnouncements)
+  const [showAnnouncementsPopup, setShowAnnouncementsPopup] = useState(false)
+  const supabase = useMemo(() => createClient(), [])
   const router = useRouter()
 
   // GPS state
   const [gpsStatus, setGpsStatus] = useState<'idle' | 'ok' | 'error'>('idle')
   const [gpsBlink, setGpsBlink] = useState(false)
 
-  const dragStartY = useRef(0)
-  const dragStartH = useRef(0)
   const qrCleanupRef = useRef<(() => void) | null>(null)
-
-  // ── Container height ───────────────────────────────────────────────────────
-  useEffect(() => {
-    const update = () => setContainerH(window.innerHeight)
-    update()
-    window.addEventListener('resize', update)
-    return () => window.removeEventListener('resize', update)
-  }, [])
 
   // ── Sync inventoryItems prop → localInventory ──────────────────────────────
   useEffect(() => {
@@ -186,39 +193,32 @@ export default function EpisodeGameplay({
     }
   }, [])
 
-  // ── Drag / snap ────────────────────────────────────────────────────────────
-  const snapSheet = useCallback((h: number) => {
-    const mid = (SHEET_DEFAULT + SHEET_EXPANDED) / 2
-    setSheetHeight(h > mid ? SHEET_EXPANDED : SHEET_DEFAULT)
-  }, [])
-
-  const onPointerDown = (e: React.PointerEvent) => {
-    setIsDragging(true)
-    dragStartY.current = e.clientY
-    dragStartH.current = sheetHeight
-    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-  }
-  const onPointerMove = (e: React.PointerEvent) => {
-    if (!isDragging) return
-    const delta = dragStartY.current - e.clientY
-    const next = Math.max(SHEET_DEFAULT, Math.min(SHEET_EXPANDED, dragStartH.current + delta))
-    setSheetHeight(next)
-  }
-  const onPointerUp = () => {
-    if (!isDragging) return
-    setIsDragging(false)
-    snapSheet(sheetHeight)
-  }
-
-  const isExpanded = sheetHeight > SHEET_DEFAULT + 20
-  const mapH = containerH - sheetHeight
+  // ── Annunci Realtime ───────────────────────────────────────────────────────
+  useEffect(() => {
+    const channel = supabase
+      .channel(`announcements:${episodeId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'episode_announcements',
+        filter: `episode_id=eq.${episodeId}`,
+      }, (payload) => {
+        const a = payload.new as Announcement
+        setAnnouncements(prev => [...prev, a])
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [supabase, episodeId])
 
   // ── Tab click ──────────────────────────────────────────────────────────────
   const handleTabClick = (tab: ActiveTab) => {
     setActiveTab(tab)
     if (tab === 'squadra') setUnreadCount(0)
-    if (!isExpanded) setSheetHeight(SHEET_EXPANDED)
+    setTabOpen(true)
+    setTabClosing(false)
   }
+
+  const isExpanded = tabOpen
 
   // ── QR scanner ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -350,10 +350,8 @@ export default function EpisodeGameplay({
 
       {/* ══ MAPPA ══════════════════════════════════════════════════════════ */}
       <div style={{
-        flex: 'none',
-        height: mapH,
+        flex: 1,
         position: 'relative',
-        transition: isDragging ? 'none' : 'height 0.32s cubic-bezier(0.32,0.72,0,1)',
         overflow: 'hidden',
       }}>
         <MapWrapper
@@ -482,152 +480,123 @@ export default function EpisodeGameplay({
         }} />
       </div>
 
-      {/* ══ BOTTOM SHEET ═══════════════════════════════════════════════════ */}
-      <div style={{
-        flex: 'none',
-        height: sheetHeight,
-        background: C.surface,
-        borderTop: '1px solid rgba(254,234,165,0.1)',
-        transition: isDragging ? 'none' : 'height 0.32s cubic-bezier(0.32,0.72,0,1)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-      }}>
-
-        {/* Handle */}
-        <div
-          style={{
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: 22,
-            cursor: 'grab',
-            touchAction: 'none',
-            userSelect: 'none',
-          }}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-        >
-          <div style={{ width: 40, height: 4, borderRadius: 2, background: C.muted2 }} />
-        </div>
-
-        {/* ── 4 TAB BUTTONS ─────────────────────────────────────────────── */}
-        <div style={{
-          flexShrink: 0,
-          display: 'flex',
-          gap: 7,
-          padding: '0 14px 10px',
-        }}>
-          {tabs.map(({ id, icon, label }) => {
-            const active = activeTab === id && isExpanded
-            return (
-              <button
-                key={id}
-                onClick={() => handleTabClick(id)}
-                style={{
-                  flex: 1,
-                  height: 46,
-                  borderRadius: 9,
-                  background: active ? 'rgba(254,234,165,0.07)' : C.surface2,
-                  border: `1px solid ${active ? 'rgba(254,234,165,0.42)' : C.border}`,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 3,
-                  cursor: 'pointer',
-                  color: active ? C.gold : C.muted,
-                  padding: 0,
-                  position: 'relative',
-                }}
-              >
-                <span style={{ fontSize: '1.1rem', lineHeight: 1 }}>{icon}</span>
-                <span style={{
-                  fontFamily: C.fontCinzel,
-                  fontSize: '0.42rem',
-                  letterSpacing: '0.1em',
-                }}>
-                  {label}
-                </span>
-                {id === 'squadra' && unreadCount > 0 && (
-                  <span style={{
-                    position: 'absolute',
-                    top: 6,
-                    right: 8,
-                    minWidth: 16,
-                    height: 16,
-                    borderRadius: 8,
-                    background: '#e85555',
-                    color: '#fff',
-                    fontSize: '0.58rem',
-                    fontFamily: C.fontCinzel,
-                    fontWeight: 700,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: '0 4px',
-                    lineHeight: 1,
-                  }}>
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </div>
-
-        {/* ── MISSIONE ATTIVA (solo collassato) ─────────────────────────── */}
-        {!isExpanded && hasJoined && (
+      {/* ══ BARRA ANNUNCI ══════════════════════════════════════════════════ */}
+      {announcements.length > 0 && (() => {
+        const last = announcements[announcements.length - 1]
+        return (
           <button
-            onClick={() => handleTabClick('missioni')}
+            onClick={() => setShowAnnouncementsPopup(true)}
             style={{
-              margin: '0 14px',
-              padding: '9px 13px',
-              borderRadius: 8,
-              background: '#181410',
-              border: `1px solid rgba(232,175,72,0.38)`,
-              borderLeft: `4px solid ${C.goldAction}`,
+              flexShrink: 0,
+              width: '100%',
+              background: 'rgba(254,234,165,0.06)',
+              borderTop: '1px solid rgba(254,234,165,0.15)',
+              borderBottom: '1px solid rgba(254,234,165,0.15)',
+              padding: '7px 14px',
               display: 'flex',
-              flexDirection: 'column',
-              gap: 3,
+              alignItems: 'center',
+              gap: 8,
               cursor: 'pointer',
               textAlign: 'left',
-              width: 'calc(100% - 28px)',
             }}
           >
+            <span style={{ fontSize: '0.75rem', flexShrink: 0 }}>📢</span>
             <span style={{
-              fontFamily: C.fontCinzel,
-              fontSize: '0.46rem',
-              letterSpacing: '0.12em',
-              color: C.goldAction,
-              background: 'rgba(232,175,72,0.1)',
-              borderRadius: 999,
-              padding: '2px 8px',
-              alignSelf: 'flex-start',
+              fontFamily: C.fontGaramond,
+              fontSize: '0.82rem',
+              color: C.gold,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              flex: 1,
             }}>
-              {activeMission ? 'MISSIONE ATTIVA' : 'COMPLETATO'}
+              {last.content}
             </span>
-            <p style={{ fontFamily: C.fontGaramond, fontSize: '0.93rem', color: C.text, margin: 0 }}>
-              {activeMission ? activeMission.name : 'Tutte le missioni completate'}
-            </p>
-            {activeMission && (
-              <p style={{ fontFamily: 'sans-serif', fontSize: '0.66rem', color: C.muted, margin: 0 }}>
-                {activeMission.targets.filter(t => completedTargets.has(t.target_id)).length}
-                /{activeMission.targets.length} obiettivi · tocca per dettagli →
-              </p>
-            )}
+            <span style={{ color: C.muted, fontSize: '0.65rem', flexShrink: 0 }}>
+              {announcements.length > 1 ? `+${announcements.length - 1}` : ''}
+            </span>
           </button>
-        )}
+        )
+      })()}
 
-        {!isExpanded && !hasJoined && (
-          <JoinPrompt joining={joining} onJoin={handleJoin} compact />
-        )}
+      {/* ══ TAB BAR ════════════════════════════════════════════════════════ */}
+      <div style={{
+        flexShrink: 0,
+        background: C.surface,
+        borderTop: '1px solid rgba(254,234,165,0.1)',
+        display: 'flex',
+        gap: 7,
+        padding: '10px 14px 10px',
+      }}>
+        {tabs.map(({ id, icon, label }) => {
+          const active = activeTab === id && tabOpen
+          return (
+            <button
+              key={id}
+              onClick={() => handleTabClick(id)}
+              style={{
+                flex: 1,
+                height: 46,
+                borderRadius: 9,
+                background: active ? 'rgba(254,234,165,0.07)' : C.surface2,
+                border: `1px solid ${active ? 'rgba(254,234,165,0.42)' : C.border}`,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 3,
+                cursor: 'pointer',
+                color: active ? C.gold : C.muted,
+                padding: 0,
+                position: 'relative',
+              }}
+            >
+              <span style={{ fontSize: '1.1rem', lineHeight: 1 }}>{icon}</span>
+              <span style={{ fontFamily: C.fontCinzel, fontSize: '0.42rem', letterSpacing: '0.1em' }}>
+                {label}
+              </span>
+              {id === 'squadra' && unreadCount > 0 && (
+                <span style={{
+                  position: 'absolute', top: 6, right: 8,
+                  minWidth: 16, height: 16, borderRadius: 8,
+                  background: '#e85555', color: '#fff',
+                  fontSize: '0.58rem', fontFamily: C.fontCinzel, fontWeight: 700,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  padding: '0 4px', lineHeight: 1,
+                }}>
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
 
-        {/* ── CONTENUTO ESPANSO ─────────────────────────────────────────── */}
-        {isExpanded && (
+      {/* ══ OVERLAY TAB CONTENUTO ══════════════════════════════════════════ */}
+      {tabOpen && (
+        <>
+          <style>{`
+            @keyframes tabSlideUp {
+              from { transform: translateY(100%); opacity: 0; }
+              to   { transform: translateY(0);    opacity: 1; }
+            }
+            @keyframes tabSlideDown {
+              from { transform: translateY(0);    opacity: 1; }
+              to   { transform: translateY(100%); opacity: 0; }
+            }
+          `}</style>
+          <div style={{
+            position: 'fixed', inset: 0,
+            background: C.bg,
+            zIndex: 100,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            animation: tabClosing
+              ? 'tabSlideDown 0.28s cubic-bezier(0.32,0.72,0,1) forwards'
+              : 'tabSlideUp 0.32s cubic-bezier(0.32,0.72,0,1) forwards',
+          }}>
+          {/* Contenuto tab */}
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
 
             {/* TAB: MISSIONI */}
@@ -667,12 +636,7 @@ export default function EpisodeGameplay({
                 padding: '8px 14px 14px',
                 gap: 12,
               }}>
-                <p style={{
-                  fontFamily: C.fontCinzel,
-                  fontSize: '0.55rem',
-                  letterSpacing: '0.16em',
-                  color: C.muted,
-                }}>
+                <p style={{ fontFamily: C.fontCinzel, fontSize: '0.55rem', letterSpacing: '0.16em', color: C.muted }}>
                   INQUADRA IL QR CODE
                 </p>
                 {qrError ? (
@@ -684,13 +648,9 @@ export default function EpisodeGameplay({
                   </div>
                 ) : (
                   <div style={{
-                    width: '100%',
-                    maxWidth: 270,
-                    borderRadius: 8,
-                    overflow: 'hidden',
-                    border: `1px solid ${C.borderGold}`,
-                    background: '#000',
-                    position: 'relative',
+                    width: '100%', maxWidth: 270, borderRadius: 8,
+                    overflow: 'hidden', border: `1px solid ${C.borderGold}`,
+                    background: '#000', position: 'relative',
                   }}>
                     <div id="qr-reader" style={{ width: '100%' }} />
                     {[
@@ -704,12 +664,8 @@ export default function EpisodeGameplay({
                   </div>
                 )}
                 <a href={`/play/${episodeId}/code`} style={{
-                  fontFamily: C.fontCinzel,
-                  fontSize: '0.52rem',
-                  letterSpacing: '0.1em',
-                  color: C.muted,
-                  textDecoration: 'underline',
-                  textUnderlineOffset: 3,
+                  fontFamily: C.fontCinzel, fontSize: '0.52rem', letterSpacing: '0.1em',
+                  color: C.muted, textDecoration: 'underline', textUnderlineOffset: 3,
                 }}>
                   Inserisci codice manualmente
                 </a>
@@ -865,7 +821,6 @@ export default function EpisodeGameplay({
                   </div>
                 ) : (
                   <>
-                    {/* Header squadra con nome team e bottone lascia */}
                     <div style={{
                       flexShrink: 0,
                       display: 'flex',
@@ -874,12 +829,7 @@ export default function EpisodeGameplay({
                       padding: '8px 14px',
                       borderBottom: `1px solid ${C.border}`,
                     }}>
-                      <span style={{
-                        fontFamily: C.fontCinzel,
-                        fontSize: '0.6rem',
-                        letterSpacing: '0.1em',
-                        color: C.gold,
-                      }}>
+                      <span style={{ fontFamily: C.fontCinzel, fontSize: '0.6rem', letterSpacing: '0.1em', color: C.gold }}>
                         {teamName ?? 'Squadra'}
                       </span>
                       <a
@@ -895,7 +845,7 @@ export default function EpisodeGameplay({
                           textDecoration: 'none',
                         }}
                       >
-                        Apri Chat di Squadra
+                        Lascia
                       </a>
                     </div>
                     <TeamChat
@@ -914,9 +864,31 @@ export default function EpisodeGameplay({
             )}
 
           </div>
-        )}
 
-      </div>
+          {/* Pulsante torna alla mappa */}
+          <div style={{ flexShrink: 0, padding: '12px 14px 20px' }}>
+            <button
+              onClick={closeTab}
+              style={{
+                width: '100%',
+                padding: '0.85rem',
+                background: 'rgba(254,234,165,0.05)',
+                border: '1px solid rgba(254,234,165,0.2)',
+                borderRadius: 9,
+                color: C.gold,
+                fontFamily: C.fontCinzel,
+                fontSize: '0.65rem',
+                letterSpacing: '0.14em',
+                cursor: 'pointer',
+              }}
+            >
+              ← TORNA ALLA MAPPA
+            </button>
+          </div>
+        </div>
+        </>
+      )}
+
       {/* ══ ITEM POPUP ═══════════════════════════════════════════════════════ */}
       {popupMode && selectedItem && (
         <div
@@ -1050,6 +1022,70 @@ export default function EpisodeGameplay({
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ══ POPUP ANNUNCI ══════════════════════════════════════════════════ */}
+      {showAnnouncementsPopup && (
+        <div
+          onClick={() => setShowAnnouncementsPopup(false)}
+          style={{
+            position: 'fixed', inset: 0,
+            background: 'rgba(0,0,0,0.78)',
+            display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+            zIndex: 200, padding: '0 0 2rem',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#111009',
+              border: '1px solid rgba(254,234,165,0.15)',
+              borderRadius: '12px 12px 4px 4px',
+              width: '100%',
+              maxWidth: 480,
+              maxHeight: '70vh',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            {/* Header popup */}
+            <div style={{
+              padding: '1rem 1.25rem',
+              borderBottom: '1px solid rgba(255,255,255,0.07)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexShrink: 0,
+            }}>
+              <span style={{ fontFamily: C.fontCinzel, fontSize: '0.65rem', letterSpacing: '0.12em', color: C.gold }}>
+                📢 ANNUNCI
+              </span>
+              <button
+                onClick={() => setShowAnnouncementsPopup(false)}
+                style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', fontSize: '1rem', padding: 0 }}
+              >
+                ✕
+              </button>
+            </div>
+            {/* Lista annunci */}
+            <div style={{ overflowY: 'auto', padding: '0.75rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {[...announcements].reverse().map(a => (
+                <div key={a.announcement_id} style={{
+                  padding: '0.75rem 0',
+                  borderBottom: '1px solid rgba(255,255,255,0.05)',
+                }}>
+                  <p style={{ color: C.text, fontFamily: C.fontGaramond, fontSize: '0.95rem', lineHeight: 1.6, margin: '0 0 0.3rem' }}>
+                    {a.content}
+                  </p>
+                  <span style={{ color: C.muted, fontSize: '0.65rem', fontFamily: C.fontCinzel, letterSpacing: '0.06em' }}>
+                    {new Date(a.created_at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

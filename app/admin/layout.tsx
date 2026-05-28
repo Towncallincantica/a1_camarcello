@@ -35,6 +35,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             { href: '/admin/combinations', label: 'Combinazioni' },
             { href: '/admin/markers',      label: 'Marker mappa' },
             { href: '/admin/players',      label: 'Giocatori' },
+            { href: '/admin/broadcast',    label: 'Broadcast' },
           ].map(({ href, label }) => (
             <li key={href}>
               <a href={href} style={{
