@@ -3,6 +3,7 @@
 import { useState, useTransition, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import AdminMapPicker, { type PickerValue } from './AdminMapPicker'
 
 type MarkerType = 'location' | 'clue' | 'npc' | 'entrance' | 'secret' | 'danger' | 'meeting_point'
 type InteractionType = 'none' | 'claim_item' | 'narrative' | 'npc_dialog' | 'zone_effect' | 'team_unlock'
@@ -15,6 +16,8 @@ type Marker = {
   lat: number
   lng: number
   radius_meters: number
+  marker_shape: 'point' | 'circle' | 'polygon'
+  geometry: { lat: number; lng: number }[] | null
   marker_type: MarkerType
   interaction_type: InteractionType
   interaction_data: Record<string, unknown>
@@ -55,6 +58,7 @@ type MarkerForm = {
   visibility_rules: VisibilityRule[]
   sort_order: string
   episode_id: string
+  picker: PickerValue
 }
 
 const EMPTY_FORM: MarkerForm = {
@@ -63,6 +67,7 @@ const EMPTY_FORM: MarkerForm = {
   marker_type: 'location', interaction_type: 'none',
   interaction_data: '{}', icon: '📍',
   is_active: true, visibility_rules: [], sort_order: '0', episode_id: '',
+  picker: { shape: 'point', lat: 0, lng: 0, radius_meters: 30, geometry: null },
 }
 
 const MARKER_TYPES: { value: MarkerType; label: string; icon: string }[] = [
@@ -271,6 +276,13 @@ export default function MarkersClient({
       visibility_rules: marker.visibility_rules ?? [],
       sort_order: marker.sort_order.toString(),
       episode_id: marker.episode_id ?? '',
+      picker: {
+        shape: marker.marker_shape ?? 'point',
+        lat: marker.lat,
+        lng: marker.lng,
+        radius_meters: marker.radius_meters,
+        geometry: marker.geometry ?? null,
+      },
     })
     setError(null)
     setInteractionError(null)
@@ -309,20 +321,27 @@ export default function MarkersClient({
 
   function validate(): string | null {
     if (!form.name.trim()) return 'Il nome è obbligatorio.'
-    if (!form.lat || isNaN(parseFloat(form.lat))) return 'Latitudine non valida.'
-    if (!form.lng || isNaN(parseFloat(form.lng))) return 'Longitudine non valida.'
+    const { lat, lng, shape, geometry } = form.picker
+    if (shape === 'polygon') {
+      if (!geometry || geometry.length < 3) return 'Disegna un poligono con almeno 3 vertici.'
+    } else {
+      if (!lat && !lng) return 'Posiziona il marker sulla mappa.'
+    }
     return null
   }
 
   function buildPayload() {
+    const { lat, lng, radius_meters, shape, geometry } = form.picker
     return {
       adventure_id: ADVENTURE_ID,
       name: form.name.trim(),
       description: form.description.trim(),
       content_html: form.content_html.trim(),
-      lat: parseFloat(form.lat),
-      lng: parseFloat(form.lng),
-      radius_meters: parseInt(form.radius_meters) || 30,
+      lat,
+      lng,
+      radius_meters,
+      marker_shape: shape,
+      geometry: geometry ?? null,
       marker_type: form.marker_type,
       interaction_type: form.interaction_type,
       interaction_data: parseInteractionData() ?? {},
@@ -561,19 +580,11 @@ export default function MarkersClient({
             {/* ── Posizione ── */}
             <p style={s.sectionTitle}>Posizione</p>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 120px', gap: '0.75rem', marginBottom: '1rem' }}>
-              <div>
-                <label style={s.label}>Latitudine *</label>
-                <input type="number" value={form.lat} onChange={e => setForm(f => ({ ...f, lat: e.target.value }))} style={s.input} placeholder="45.12345" step="0.00001" />
-              </div>
-              <div>
-                <label style={s.label}>Longitudine *</label>
-                <input type="number" value={form.lng} onChange={e => setForm(f => ({ ...f, lng: e.target.value }))} style={s.input} placeholder="11.12345" step="0.00001" />
-              </div>
-              <div>
-                <label style={s.label}>Raggio (m)</label>
-                <input type="number" value={form.radius_meters} onChange={e => setForm(f => ({ ...f, radius_meters: e.target.value }))} style={s.input} min={1} />
-              </div>
+            <div style={{ marginBottom: '1rem' }}>
+              <AdminMapPicker
+                value={form.picker}
+                onChange={picker => setForm(f => ({ ...f, picker }))}
+              />
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
