@@ -195,19 +195,24 @@ export default function EpisodeGameplay({
 
   // ── Annunci Realtime ───────────────────────────────────────────────────────
   useEffect(() => {
-    const channel = supabase
-      .channel(`announcements:${episodeId}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'episode_announcements',
-        filter: `episode_id=eq.${episodeId}`,
-      }, (payload) => {
-        const a = payload.new as Announcement
-        setAnnouncements(prev => [...prev, a])
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    let channel: ReturnType<typeof supabase.channel> | null = null
+
+    supabase.auth.getSession().then(() => {
+      channel = supabase
+        .channel(`announcements:${episodeId}`)
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'episode_announcements',
+          filter: `episode_id=eq.${episodeId}`,
+        }, (payload) => {
+          const a = payload.new as Announcement
+          setAnnouncements(prev => [...prev, a])
+        })
+        .subscribe()
+    })
+
+    return () => { if (channel) supabase.removeChannel(channel) }
   }, [supabase, episodeId])
 
   // ── Tab click ──────────────────────────────────────────────────────────────
