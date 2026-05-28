@@ -35,6 +35,7 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
   const mapInstanceRef = useRef<unknown>(null)
   const playerMarkersRef = useRef<Map<string, unknown>>(new Map())
   const poiMarkersRef = useRef<Map<string, unknown>>(new Map())
+  const hasInitialCentered = useRef(false)
   const supabase = useMemo(() => createClient(), [])
 
   useEffect(() => {
@@ -157,6 +158,15 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
     if (initialLocations.length === 0) return
 
     import('leaflet').then((L) => {
+      if (!hasInitialCentered.current) {
+        const self = initialLocations.find(l => l.user_id === currentUserId)
+        if (self) {
+          ;(map as unknown as { setView: (c: [number, number], z: number) => void })
+            .setView([self.lat, self.lng], 17)
+          hasInitialCentered.current = true
+        }
+      }
+
       for (const loc of initialLocations) {
         const isSelf = loc.user_id === currentUserId
         const existing = playerMarkersRef.current.get(loc.user_id) as

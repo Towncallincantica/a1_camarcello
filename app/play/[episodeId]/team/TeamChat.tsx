@@ -17,9 +17,10 @@ interface Props {
   playerId: string
   displayName: string
   initialMessages: Message[]
+  onNewMessage?: () => void
 }
 
-export function TeamChat({ teamId, episodeId, playerId, displayName, initialMessages }: Props) {
+export function TeamChat({ teamId, episodeId, playerId, displayName, initialMessages, onNewMessage }: Props) {
   const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [text, setText] = useState('')
   const [isPending, startTransition] = useTransition()
@@ -64,6 +65,7 @@ export function TeamChat({ teamId, episodeId, playerId, displayName, initialMess
 
           // Se il messaggio è di un altro player, recupera il display_name reale
           if (msg.player_id !== playerId) {
+            onNewMessage?.()
             const { data } = await supabase
               .from('player')
               .select('display_name')

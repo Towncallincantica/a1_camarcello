@@ -146,6 +146,7 @@ export default function EpisodeGameplay({
   const [popupMode, setPopupMode] = useState<PopupMode | null>(null)
   const [localInventory, setLocalInventory] = useState<InventoryItem[]>(inventoryItems)
   const [isDeleting, startDeleteTransition] = useTransition()
+  const [unreadCount, setUnreadCount] = useState(0)
   const router = useRouter()
 
   // GPS state
@@ -215,6 +216,7 @@ export default function EpisodeGameplay({
   // ── Tab click ──────────────────────────────────────────────────────────────
   const handleTabClick = (tab: ActiveTab) => {
     setActiveTab(tab)
+    if (tab === 'squadra') setUnreadCount(0)
     if (!isExpanded) setSheetHeight(SHEET_EXPANDED)
   }
 
@@ -539,6 +541,7 @@ export default function EpisodeGameplay({
                   cursor: 'pointer',
                   color: active ? C.gold : C.muted,
                   padding: 0,
+                  position: 'relative',
                 }}
               >
                 <span style={{ fontSize: '1.1rem', lineHeight: 1 }}>{icon}</span>
@@ -549,6 +552,28 @@ export default function EpisodeGameplay({
                 }}>
                   {label}
                 </span>
+                {id === 'squadra' && unreadCount > 0 && (
+                  <span style={{
+                    position: 'absolute',
+                    top: 6,
+                    right: 8,
+                    minWidth: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    background: '#e85555',
+                    color: '#fff',
+                    fontSize: '0.58rem',
+                    fontFamily: C.fontCinzel,
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '0 4px',
+                    lineHeight: 1,
+                  }}>
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
               </button>
             )
           })}
@@ -845,6 +870,9 @@ export default function EpisodeGameplay({
                     playerId={player.player_id}
                     displayName={player.display_name}
                     initialMessages={initialMessages}
+                    onNewMessage={() => {
+                      if (activeTab !== 'squadra') setUnreadCount(c => c + 1)
+                    }}
                   />
                 )}
               </div>
