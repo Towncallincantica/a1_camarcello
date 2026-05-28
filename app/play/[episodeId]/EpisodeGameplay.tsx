@@ -164,6 +164,7 @@ export default function EpisodeGameplay({
   const [announcements, setAnnouncements] = useState<Announcement[]>(initialAnnouncements)
   const [showAnnouncementsPopup, setShowAnnouncementsPopup] = useState(false)
   const supabase = useMemo(() => createClient(), [])
+  const teamMemberIds = useMemo(() => teamId ? [teamId] : [], [teamId])
   const router = useRouter()
 
   // GPS state
@@ -364,7 +365,7 @@ export default function EpisodeGameplay({
           currentUserId={currentUserId}
           playerId={player.player_id}
           playerLevel={player.level}
-          teamMemberIds={teamId ? [teamId] : []}
+          teamMemberIds={teamMemberIds}
         />
 
         {/* Top bar sovrapposta */}

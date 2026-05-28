@@ -222,7 +222,15 @@ export default function MapWrapper({
       .channel(`map-locations:${episodeId}`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'player_current_location',
-      }, () => loadLocations())
+      }, (payload) => {
+  const raw = payload.new as { user_id: string; display_name?: string; lat?: number; lng?: number }
+  if (!raw.user_id || raw.lat == null || raw.lng == null) return
+  setLocations(prev => {
+    const exists = prev.find(l => l.user_id === raw.user_id)
+    if (exists) return prev.map(l => l.user_id === raw.user_id ? { ...l, lat: raw.lat!, lng: raw.lng! } : l)
+    return [...prev, { user_id: raw.user_id, display_name: raw.display_name ?? '?', lat: raw.lat!, lng: raw.lng! }]
+  })
+})
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [episodeId, supabase, loadLocations])
