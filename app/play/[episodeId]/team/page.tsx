@@ -72,12 +72,13 @@ export default async function TeamPage({
 
   return (
     <main style={{
-      minHeight: '100vh',
+      height: '100vh',
       background: '#090807',
       color: '#e8e4dc',
       fontFamily: 'Georgia, serif',
       display: 'flex',
       flexDirection: 'column',
+      overflow: 'hidden',
     }}>
       {/* Header */}
       <div style={{
@@ -87,6 +88,10 @@ export default async function TeamPage({
         alignItems: 'center',
         gap: '1rem',
         flexShrink: 0,
+        position: 'sticky',
+        top: 0,
+        background: '#090807',
+        zIndex: 10,
       }}>
         <a
           href={`/play/${episodeId}`}
