@@ -1,8 +1,8 @@
-import { createClient } from '@/lib/supabase/server'
+import { createServiceRoleClient } from '@/lib/supabase/service'
 import { ADVENTURE_ID } from '@/lib/constants'
 
 export default async function PlayersPage() {
-  const supabase = await createClient()
+  const supabase = createServiceRoleClient()
 
   const { data: players } = await supabase
     .from('player')
