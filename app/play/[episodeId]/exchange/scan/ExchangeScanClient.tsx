@@ -91,7 +91,7 @@ export function ExchangeScanClient({ episodeId, playerAId }: Props) {
                 return
               }
               try {
-                const sessionId = await initiateExchange(episodeId, playerAId, parsed.player_id)
+                const sessionId = await initiateExchange(episodeId, parsed.player_id)
                 router.push(`/play/${episodeId}/exchange/${sessionId}`)
               } catch (err) {
                 setError(err instanceof Error ? err.message : 'Errore durante lo scambio.')

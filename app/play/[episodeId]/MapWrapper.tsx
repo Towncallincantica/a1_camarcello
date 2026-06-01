@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo, useCallback } from 'react'
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { MapView, type MapMarker } from '@/components/MapView'
 
@@ -133,13 +133,12 @@ export default function MapWrapper({
   })
   const supabase = useMemo(() => createClient(), [])
 
-  // Carica posizioni player
+  // Carica posizioni player (estrae lat/lng via ST_Y/ST_X nella RPC)
   const loadLocations = useCallback(async () => {
     const { data, error } = await supabase
       .rpc('get_episode_player_locations', { p_episode_id: episodeId })
     if (error) { console.error('[MapWrapper] RPC error:', error); return }
-    if (!data || (data as unknown[]).length === 0) return
-    setLocations(data as PlayerLocation[])
+    setLocations((data ?? []) as PlayerLocation[])
   }, [episodeId, supabase])
 
   // Carica marker dalla DB
@@ -149,9 +148,6 @@ export default function MapWrapper({
       .select('marker_id, name, description, content_html, lat, lng, radius_meters, marker_type, interaction_type, interaction_data, icon, visibility_rules, episode_id')
       .eq('adventure_id', process.env.NEXT_PUBLIC_ADVENTURE_ID!)
       .eq('is_active', true)
-
-  console.log('[MapWrapper] markers data:', data, 'error:', error)  // ← aggiungi
-
 
     if (error) { console.error('[MapWrapper] markers error:', error); return }
     setAllRawMarkers((data ?? []) as RawMarker[])
@@ -216,23 +212,35 @@ export default function MapWrapper({
     return () => window.removeEventListener('gps:ok', onGpsOk)
   }, [loadLocations])
 
-  // Realtime locations
+  // ── Realtime locations ────────────────────────────────────────
+  // Filtro per episodio: riceviamo SOLO i cambi dei giocatori di QUESTO episodio
+  // (player_current_location.episode_id), niente fan-out globale.
+  // La colonna position è PostGIS → non deserializzabile nel payload Realtime:
+  // usiamo l'evento solo come trigger e rifetchiamo le coord via RPC (debounced).
+  const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
+    const scheduleRefetch = () => {
+      if (refetchTimer.current) return // già schedulato
+      refetchTimer.current = setTimeout(() => {
+        refetchTimer.current = null
+        loadLocations()
+      }, 500)
+    }
+
     const channel = supabase
       .channel(`map-locations:${episodeId}`)
       .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'player_current_location',
-      }, (payload) => {
-  const raw = payload.new as { user_id: string; display_name?: string; lat?: number; lng?: number }
-  if (!raw.user_id || raw.lat == null || raw.lng == null) return
-  setLocations(prev => {
-    const exists = prev.find(l => l.user_id === raw.user_id)
-    if (exists) return prev.map(l => l.user_id === raw.user_id ? { ...l, lat: raw.lat!, lng: raw.lng! } : l)
-    return [...prev, { user_id: raw.user_id, display_name: raw.display_name ?? '?', lat: raw.lat!, lng: raw.lng! }]
-  })
-})
+        event: '*',
+        schema: 'public',
+        table: 'player_current_location',
+        filter: `episode_id=eq.${episodeId}`,
+      }, scheduleRefetch)
       .subscribe()
-    return () => { supabase.removeChannel(channel) }
+
+    return () => {
+      if (refetchTimer.current) { clearTimeout(refetchTimer.current); refetchTimer.current = null }
+      supabase.removeChannel(channel)
+    }
   }, [episodeId, supabase, loadLocations])
 
   // Aggiorna team locations dal pool delle locations caricate

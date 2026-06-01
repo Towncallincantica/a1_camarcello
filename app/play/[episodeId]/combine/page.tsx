@@ -40,7 +40,7 @@ export default async function CombinePage({
       .select(`
         recipe_id, name, result_message, is_active,
         combination_recipe_inputs ( item_id, items ( item_id, name, rarity ) ),
-        combination_recipe_outputs ( item_id, quantity, items ( item_id, name, rarity ) )
+        combination_recipe_outputs ( item_id, quantity, items ( item_id, name, rarity, description, icon_url ) )
       `)
       .eq('adventure_id', ADVENTURE_ID)
       .eq('is_active', true),
@@ -70,7 +70,7 @@ export default async function CombinePage({
     combination_recipe_outputs: {
       item_id: string
       quantity: number
-      items: { item_id: string; name: string; rarity: string } | null
+      items: { item_id: string; name: string; rarity: string; description: string | null; icon_url: string | null } | null
     }[]
   }
 

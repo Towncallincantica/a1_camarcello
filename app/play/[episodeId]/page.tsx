@@ -1,5 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { createServiceRoleClient } from '@/lib/supabase/service'
+import { requirePlayer } from '@/lib/auth/requirePlayer'
 import { ADVENTURE_ID } from '@/lib/constants'
 import EpisodeGameplay from './EpisodeGameplay'
 
@@ -148,11 +150,14 @@ export default async function EpisodePage({
 
   async function joinEpisode() {
     'use server'
-    const supabase = await createClient()
-    await supabase.from('player_episode_stats').insert({
-      player_id: player!.player_id,
+    const { player: me } = await requirePlayer()
+    const service = createServiceRoleClient()
+    // 23505 (già iscritto) ignorato: idempotente
+    const { error } = await service.from('player_episode_stats').insert({
+      player_id: me.player_id,
       episode_id: episodeId,
     })
+    if (error && error.code !== '23505') throw new Error(error.message)
     const { redirect } = await import('next/navigation')
     redirect(`/play/${episodeId}`)
   }

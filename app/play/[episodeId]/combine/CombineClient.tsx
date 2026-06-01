@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useTransition, useMemo } from 'react'
+import { useState, useTransition, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { combineItems } from './actions'
 
 interface ItemInfo {
   item_id: string
@@ -26,7 +26,7 @@ interface RecipeItem {
 interface RecipeOutput {
   item_id: string
   quantity: number
-  items: { item_id: string; name: string; rarity: string } | null
+  items: { item_id: string; name: string; rarity: string; description: string | null; icon_url: string | null } | null
 }
 
 interface Recipe {
@@ -53,22 +53,24 @@ const rarityColors: Record<string, string> = {
   legendary: '#feeaa5',
 }
 
-export function CombineClient({ episodeId, playerId, inventory, recipes, preselect }: Props) {
+export function CombineClient({ episodeId, inventory, recipes, preselect }: Props) {
   const [selected, setSelected] = useState<Set<string>>(
     preselect ? new Set([preselect]) : new Set()
   )
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [craftedItem, setCraftedItem] = useState<{ name: string; rarity: string; description: string | null; icon_url: string | null } | null>(null)
   const [isPending, startTransition] = useTransition()
   const router = useRouter()
-  const supabase = useMemo(() => createClient(), [])
 
-  const inventoryMap = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const inv of inventory) {
-      if (inv.items) m.set(inv.items.item_id, inv.quantity)
-    }
-    return m
-  }, [inventory])
+  // Countdown popup combinazione → torna alla mappa
+  useEffect(() => {
+    if (!craftedItem) return
+    const t = setTimeout(() => {
+      setCraftedItem(null)
+      router.push(`/play/${episodeId}`)
+    }, 5000)
+    return () => clearTimeout(t)
+  }, [craftedItem, episodeId, router])
 
   function toggleSelect(itemId: string) {
     setSelected((prev) => {
@@ -99,56 +101,16 @@ export function CombineClient({ episodeId, playerId, inventory, recipes, presele
     }
 
     startTransition(async () => {
-      for (const input of recipe.combination_recipe_inputs) {
-        const qty = inventoryMap.get(input.item_id) ?? 0
-        if (qty <= 1) {
-          await supabase
-            .from('player_episode_inventory')
-            .delete()
-            .eq('player_id', playerId)
-            .eq('item_id', input.item_id)
-            .eq('episode_id', episodeId)
-        } else {
-          await supabase
-            .from('player_episode_inventory')
-            .update({ quantity: qty - 1 })
-            .eq('player_id', playerId)
-            .eq('item_id', input.item_id)
-            .eq('episode_id', episodeId)
-        }
+      const res = await combineItems(episodeId, recipe.recipe_id)
+      if (res.success) {
+        setSelected(new Set())
+        const out = recipe.combination_recipe_outputs[0]?.items ?? null
+        setCraftedItem(out
+          ? { name: out.name, rarity: out.rarity, description: out.description, icon_url: out.icon_url }
+          : { name: 'Oggetto creato', rarity: 'common', description: null, icon_url: null })
+      } else {
+        setResult({ success: false, message: res.error })
       }
-
-      for (const output of recipe.combination_recipe_outputs) {
-        const existing = await supabase
-          .from('player_episode_inventory')
-          .select('quantity')
-          .eq('player_id', playerId)
-          .eq('item_id', output.item_id)
-          .eq('episode_id', episodeId)
-          .single()
-
-        if (existing.data) {
-          await supabase
-            .from('player_episode_inventory')
-            .update({ quantity: existing.data.quantity + output.quantity })
-            .eq('player_id', playerId)
-            .eq('item_id', output.item_id)
-            .eq('episode_id', episodeId)
-        } else {
-          await supabase
-            .from('player_episode_inventory')
-            .insert({
-              player_id: playerId,
-              item_id: output.item_id,
-              episode_id: episodeId,
-              quantity: output.quantity,
-            })
-        }
-      }
-
-      setResult({ success: true, message: recipe.result_message || 'Combinazione riuscita!' })
-      setSelected(new Set())
-      setTimeout(() => router.refresh(), 800)
     })
   }
 
@@ -156,6 +118,57 @@ export function CombineClient({ episodeId, playerId, inventory, recipes, presele
 
   return (
     <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+
+      {craftedItem && (() => {
+        const rColor = rarityColors[craftedItem.rarity] ?? rarityColors.common
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            background: 'rgba(9,8,7,0.92)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem',
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem', maxWidth: 320, width: '100%' }}>
+              <div style={{
+                width: 130, height: 130, border: `1px solid ${rColor}`,
+                boxShadow: `0 0 24px ${rColor}40`, background: 'rgba(255,255,255,0.03)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+              }}>
+                {craftedItem.icon_url
+                  // eslint-disable-next-line @next/next/no-img-element
+                  ? <img src={craftedItem.icon_url} alt={craftedItem.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : <span style={{ fontSize: '2.5rem', color: rColor, opacity: 0.4 }}>◈</span>}
+              </div>
+              <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontFamily: "'Cinzel', serif", fontSize: '0.55rem', letterSpacing: '0.14em', color: rColor, textTransform: 'uppercase' }}>
+                  {craftedItem.rarity}
+                </span>
+                <span style={{ fontFamily: "'Cinzel', serif", fontSize: '1rem', color: '#feeaa5' }}>
+                  {craftedItem.name}
+                </span>
+                {craftedItem.description && (
+                  <span style={{ fontFamily: "'EB Garamond', Georgia, serif", fontSize: '0.85rem', color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
+                    {craftedItem.description}
+                  </span>
+                )}
+              </div>
+              <span style={{ fontFamily: "'Cinzel', serif", fontSize: '0.48rem', letterSpacing: '0.12em', color: 'rgba(255,255,255,0.3)' }}>
+                AGGIUNTO ALL'INVENTARIO
+              </span>
+              <a href={`/play/${episodeId}/inventory`} style={{
+                textDecoration: 'none', textAlign: 'center', padding: '0.55rem 1rem',
+                border: `1px solid ${rColor}55`, background: `${rColor}11`, color: '#feeaa5',
+                fontFamily: "'Cinzel', serif", fontSize: '0.7rem', letterSpacing: '0.1em', textTransform: 'uppercase',
+              }}>
+                Vedi inventario
+              </a>
+              <div style={{ width: '100%', height: 2, background: 'rgba(255,255,255,0.07)', borderRadius: 1, overflow: 'hidden' }}>
+                <div style={{ height: '100%', background: rColor, animation: 'drainBarCombine 5s linear forwards' }} />
+              </div>
+              <style>{`@keyframes drainBarCombine { from { width: 100%; } to { width: 0%; } }`}</style>
+            </div>
+          </div>
+        )
+      })()}
 
       <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.82rem', margin: 0 }}>
         Seleziona gli oggetti da combinare.

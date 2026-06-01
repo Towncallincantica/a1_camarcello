@@ -1,13 +1,15 @@
 'use server'
 
 import { createServiceRoleClient } from '@/lib/supabase/service'
+import { requirePlayer } from '@/lib/auth/requirePlayer'
 import { revalidatePath } from 'next/cache'
 
 export async function deleteItem(
   episodeId: string,
-  playerId: string,
   itemId: string
 ) {
+  const { player: me } = await requirePlayer()
+  const playerId = me.player_id
   const service = createServiceRoleClient()
 
   const { data: inv } = await service

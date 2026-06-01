@@ -7,6 +7,7 @@ import { TeamChat } from './team/TeamChat'
 import { deleteItem } from './actions'
 import { claimItemByQR, type ClaimResult } from './qrActions'
 import { createClient } from '@/lib/supabase/client'
+import { initiateExchange } from './exchange/actions'
 
 const MapWrapper = dynamic(() => import('./MapWrapper'), { ssr: false })
 
@@ -166,6 +167,7 @@ export default function EpisodeGameplay({
   const supabase = useMemo(() => createClient(), [])
   const teamMemberIds = useMemo(() => teamId ? [teamId] : [], [teamId])
   const router = useRouter()
+  const exchangeStarting = useRef(false)
 
   // GPS state
   const [gpsStatus, setGpsStatus] = useState<'idle' | 'ok' | 'error'>('idle')
@@ -196,24 +198,22 @@ export default function EpisodeGameplay({
 
   // ── Annunci Realtime ───────────────────────────────────────────────────────
   useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null
+    const channel = supabase
+      .channel(`announcements:${episodeId}:${Math.random().toString(36).slice(2)}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'episode_announcements',
+        filter: `episode_id=eq.${episodeId}`,
+      }, (payload) => {
+        const a = payload.new as Announcement
+        setAnnouncements(prev =>
+          prev.some(x => x.announcement_id === a.announcement_id) ? prev : [...prev, a]
+        )
+      })
+      .subscribe()
 
-    supabase.auth.getSession().then(() => {
-      channel = supabase
-        .channel(`announcements:${episodeId}`)
-        .on('postgres_changes', {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'episode_announcements',
-          filter: `episode_id=eq.${episodeId}`,
-        }, (payload) => {
-          const a = payload.new as Announcement
-          setAnnouncements(prev => [...prev, a])
-        })
-        .subscribe()
-    })
-
-    return () => { if (channel) supabase.removeChannel(channel) }
+    return () => { supabase.removeChannel(channel) }
   }, [supabase, episodeId])
 
   // ── Tab click ──────────────────────────────────────────────────────────────
@@ -237,6 +237,7 @@ export default function EpisodeGameplay({
     }
     let cancelled = false
     setQrError(null)
+
     const startScanner = async () => {
       try {
         const { Html5Qrcode } = await import('html5-qrcode')
@@ -255,18 +256,42 @@ export default function EpisodeGameplay({
               const result = await claimItemByQR(episodeId, parsed.item_id)
               if (result.success) {
                 setClaimedItem(result.item)
+                // Aggiorna l'inventario locale subito (no reload necessario)
+                const ci = result.item
+                setLocalInventory(prev => {
+                  const idx = prev.findIndex(i => i.item_id === ci.item_id)
+                  if (idx >= 0) {
+                    return prev.map((i, k) => k === idx ? { ...i, quantity: i.quantity + 1 } : i)
+                  }
+                  return [...prev, {
+                    item_id: ci.item_id,
+                    name: ci.name,
+                    description: ci.description ?? null,
+                    image_url: ci.image_url ?? ci.icon_url ?? null,
+                    quantity: 1,
+                    rarity: ci.rarity,
+                  }]
+                })
                 if (popupTimerRef.current) clearTimeout(popupTimerRef.current)
-                popupTimerRef.current = setTimeout(() => setClaimedItem(null), 5000)
+                popupTimerRef.current = setTimeout(() => { setClaimedItem(null); closeTab() }, 5000)
               } else {
                 setQrError(result.error)
               }
               return
             }
 
-            if (parsed?.type === 'player' && parsed.player_id) {
-              window.location.href = `/play/${episodeId}/exchange/scan`
-              return
+          if (parsed?.type === 'player' && parsed.player_id) {
+            if (exchangeStarting.current) return   // già in corso → ignora i frame successivi
+            exchangeStarting.current = true
+            try {
+              const sessionId = await initiateExchange(episodeId, parsed.player_id)
+              router.push(`/play/${episodeId}/exchange/${sessionId}`)
+            } catch (err) {
+              console.error(err)
+              exchangeStarting.current = false     // riabilita solo in caso di errore
             }
+            return
+          }
 
             window.location.href = `/play/${episodeId}/code?qr=${encodeURIComponent(decodedText)}`
           },
@@ -308,7 +333,7 @@ export default function EpisodeGameplay({
     if (!selectedItem) return
     const itemId = selectedItem.item_id
     startDeleteTransition(async () => {
-      await deleteItem(episodeId, player.player_id, itemId)
+      await deleteItem(episodeId, itemId)
       setLocalInventory(prev =>
         prev.map(i => i.item_id !== itemId ? i : { ...i, quantity: i.quantity - 1 })
            .filter(i => i.quantity > 0)
@@ -728,6 +753,23 @@ export default function EpisodeGameplay({
                     <span style={{ fontFamily: C.fontCinzel, fontSize: '0.48rem', letterSpacing: '0.12em', color: C.muted2 }}>
                       AGGIUNTO ALL'INVENTARIO
                     </span>
+                    <a
+                      href={`/play/${episodeId}/inventory`}
+                      style={{
+                        textDecoration: 'none',
+                        textAlign: 'center',
+                        padding: '0.55rem 1rem',
+                        border: `1px solid ${rColor}55`,
+                        background: `${rColor}11`,
+                        color: C.gold,
+                        fontFamily: C.fontCinzel,
+                        fontSize: '0.7rem',
+                        letterSpacing: '0.1em',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      Vedi inventario
+                    </a>
                     <div style={{ width: '100%', height: 2, background: 'rgba(255,255,255,0.07)', borderRadius: 1, overflow: 'hidden' }}>
                       <div style={{ height: '100%', background: rColor, animation: 'drainBar 5s linear forwards' }} />
                     </div>

@@ -66,9 +66,10 @@ export default async function TeamPage({
         .eq('episode_id', episodeId)
     : { data: [] }
 
-  const createTeamWithIds = createTeam.bind(null, episodeId, player.player_id)
-  const joinTeamWithIds = joinTeam.bind(null, episodeId, player.player_id)
-  const leaveTeamWithIds = leaveTeam.bind(null, episodeId, player.player_id)
+  // Identità derivata server-side nelle RPC: bind solo episodeId.
+  const createTeamWithIds = createTeam.bind(null, episodeId)
+  const joinTeamWithIds = joinTeam.bind(null, episodeId)
+  const leaveTeamWithIds = leaveTeam.bind(null, episodeId)
 
   return (
     <main style={{

@@ -279,6 +279,18 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
 
 // ── Helpers ───────────────────────────────────────────────────
 
+// Escape di stringhe non fidate prima dell'interpolazione in HTML grezzo.
+// Critico: display_name è impostato dall'utente → senza escape = stored XSS.
+function escapeHtml(input: string): string {
+  return String(input ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+
 function addPoiMarker(
   L: typeof import('leaflet'),
   map: ReturnType<typeof L.map>,
@@ -341,7 +353,7 @@ function poiMarkerHtml(icon: string, markerType: string): string {
         font-size: 18px;
         line-height: 1;
         display: block;
-      ">${icon}</span>
+      ">${escapeHtml(icon)}</span>
     </div>
   `
 }
@@ -366,7 +378,7 @@ function buildPopupHtml(poi: MapMarker): string {
         color: #feeaa5;
         margin-bottom: 0.4rem;
         padding-right: 1.5rem;
-      ">${poi.icon} ${poi.name}</div>
+      ">${escapeHtml(poi.icon)} ${escapeHtml(poi.name)}</div>
 
       ${poi.description ? `
         <div style="
@@ -374,10 +386,11 @@ function buildPopupHtml(poi: MapMarker): string {
           color: rgba(255,255,255,0.5);
           margin-bottom: ${poi.content_html ? '0.75rem' : '0'};
           font-style: italic;
-        ">${poi.description}</div>
+        ">${escapeHtml(poi.description)}</div>
       ` : ''}
 
       ${poi.content_html ? `
+        <!-- content_html: HTML voluto, autored da admin. Sanitizzare lato admin (vedi T12). -->
         <div style="
           font-size: 0.88rem;
           color: #e8e4dc;
@@ -418,7 +431,7 @@ function playerMarkerHtml(label: string, isSelf: boolean): string {
         background:rgba(9,8,7,0.85);border:1px solid ${border};
         padding:1px 6px;border-radius:999px;
         font-size:10px;color:${color};white-space:nowrap;letter-spacing:0.04em;
-      ">${label}</div>
+      ">${escapeHtml(label)}</div>
     </div>
   `
 }

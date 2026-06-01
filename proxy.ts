@@ -21,16 +21,26 @@ export async function proxy(request: NextRequest) {
   )
 
   const { data: { user } } = await supabase.auth.getUser()
-
   const { pathname } = request.nextUrl
 
-  if (!user && pathname.startsWith('/play')) {
+  // Non autenticato → login (per /play e /admin)
+  if (!user && (pathname.startsWith('/play') || pathname.startsWith('/admin'))) {
     return NextResponse.redirect(new URL('/login', request.url))
+  }
+
+  // Gate /admin: autenticato ma non admin → /play
+  if (user && pathname.startsWith('/admin')) {
+    const { data: isAdmin } = await supabase.rpc('is_admin', {
+      p_adventure_id: process.env.NEXT_PUBLIC_ADVENTURE_ID!,
+    })
+    if (!isAdmin) {
+      return NextResponse.redirect(new URL('/play', request.url))
+    }
   }
 
   return supabaseResponse
 }
 
 export const config = {
-  matcher: ['/play/:path*'],
+  matcher: ['/play/:path*', '/admin/:path*'],
 }

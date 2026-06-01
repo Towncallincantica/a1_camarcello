@@ -1,23 +1,22 @@
 import { createClient } from '@/lib/supabase/server'
-import { ADVENTURE_ID } from '@/lib/constants'
+import { createPlayerForUser } from '@/lib/player/createPlayer'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(request: NextRequest) {
   const formData = await request.formData()
-  const display_name = formData.get('display_name') as string
 
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-
   if (!user) {
-    return NextResponse.redirect(new URL('/login', request.url))
+    return NextResponse.redirect(new URL('/login', request.url), { status: 303 })
   }
 
-  await supabase.from('player').insert({
-    user_id: user.id,
-    adventure_id: ADVENTURE_ID,
-    display_name: display_name.trim(),
-  })
+  try {
+    await createPlayerForUser(supabase, user.id, formData.get('display_name'))
+  } catch {
+    // Nome non valido → torna all'onboarding
+    return NextResponse.redirect(new URL('/play', request.url), { status: 303 })
+  }
 
-  return NextResponse.redirect(new URL('/play', request.url))
+  return NextResponse.redirect(new URL('/play', request.url), { status: 303 })
 }

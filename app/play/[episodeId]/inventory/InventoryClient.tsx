@@ -75,7 +75,7 @@ export function InventoryClient({ episodeId, playerId, inventory: initialInvento
     if (!selected) return
     const itemId = selected.item_id
     startTransition(async () => {
-      await deleteItem(episodeId, playerId, itemId)
+      await deleteItem(episodeId, itemId)
       // Aggiorna stato locale
       setInventory((prev) => {
         return prev

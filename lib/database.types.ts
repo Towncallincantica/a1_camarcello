@@ -375,6 +375,45 @@ export type Database = {
           },
         ]
       }
+      episode_announcements: {
+        Row: {
+          announcement_id: string
+          content: string
+          created_at: string
+          episode_id: string
+          sent_by_player_id: string | null
+        }
+        Insert: {
+          announcement_id?: string
+          content: string
+          created_at?: string
+          episode_id: string
+          sent_by_player_id?: string | null
+        }
+        Update: {
+          announcement_id?: string
+          content?: string
+          created_at?: string
+          episode_id?: string
+          sent_by_player_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "episode_announcements_episode_id_fkey"
+            columns: ["episode_id"]
+            isOneToOne: false
+            referencedRelation: "episodes"
+            referencedColumns: ["episode_id"]
+          },
+          {
+            foreignKeyName: "episode_announcements_sent_by_player_id_fkey"
+            columns: ["sent_by_player_id"]
+            isOneToOne: false
+            referencedRelation: "player"
+            referencedColumns: ["player_id"]
+          },
+        ]
+      }
       episodes: {
         Row: {
           adventure_id: string
@@ -664,6 +703,93 @@ export type Database = {
           },
         ]
       }
+      map_markers: {
+        Row: {
+          adventure_id: string
+          content_html: string
+          created_at: string
+          custom_data: Json
+          description: string
+          episode_id: string | null
+          geometry: Json | null
+          icon: string
+          interaction_data: Json
+          interaction_type: Database["public"]["Enums"]["marker_interaction_type"]
+          is_active: boolean
+          lat: number
+          lng: number
+          marker_id: string
+          marker_shape: string
+          marker_type: Database["public"]["Enums"]["marker_type"]
+          name: string
+          radius_meters: number
+          sort_order: number
+          updated_at: string
+          visibility_rules: Json
+        }
+        Insert: {
+          adventure_id: string
+          content_html?: string
+          created_at?: string
+          custom_data?: Json
+          description?: string
+          episode_id?: string | null
+          geometry?: Json | null
+          icon?: string
+          interaction_data?: Json
+          interaction_type?: Database["public"]["Enums"]["marker_interaction_type"]
+          is_active?: boolean
+          lat: number
+          lng: number
+          marker_id?: string
+          marker_shape?: string
+          marker_type?: Database["public"]["Enums"]["marker_type"]
+          name: string
+          radius_meters?: number
+          sort_order?: number
+          updated_at?: string
+          visibility_rules?: Json
+        }
+        Update: {
+          adventure_id?: string
+          content_html?: string
+          created_at?: string
+          custom_data?: Json
+          description?: string
+          episode_id?: string | null
+          geometry?: Json | null
+          icon?: string
+          interaction_data?: Json
+          interaction_type?: Database["public"]["Enums"]["marker_interaction_type"]
+          is_active?: boolean
+          lat?: number
+          lng?: number
+          marker_id?: string
+          marker_shape?: string
+          marker_type?: Database["public"]["Enums"]["marker_type"]
+          name?: string
+          radius_meters?: number
+          sort_order?: number
+          updated_at?: string
+          visibility_rules?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "map_markers_adventure_id_fkey"
+            columns: ["adventure_id"]
+            isOneToOne: false
+            referencedRelation: "adventures"
+            referencedColumns: ["adventure_id"]
+          },
+          {
+            foreignKeyName: "map_markers_episode_id_fkey"
+            columns: ["episode_id"]
+            isOneToOne: false
+            referencedRelation: "episodes"
+            referencedColumns: ["episode_id"]
+          },
+        ]
+      }
       player: {
         Row: {
           adventure_id: string
@@ -755,6 +881,7 @@ export type Database = {
         Row: {
           accuracy: number | null
           created_at: string
+          episode_id: string | null
           heading: number | null
           position: unknown
           speed: number | null
@@ -764,6 +891,7 @@ export type Database = {
         Insert: {
           accuracy?: number | null
           created_at?: string
+          episode_id?: string | null
           heading?: number | null
           position: unknown
           speed?: number | null
@@ -773,6 +901,7 @@ export type Database = {
         Update: {
           accuracy?: number | null
           created_at?: string
+          episode_id?: string | null
           heading?: number | null
           position?: unknown
           speed?: number | null
@@ -780,6 +909,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "player_current_location_episode_id_fkey"
+            columns: ["episode_id"]
+            isOneToOne: false
+            referencedRelation: "episodes"
+            referencedColumns: ["episode_id"]
+          },
           {
             foreignKeyName: "player_current_location_user_id_fkey"
             columns: ["user_id"]
@@ -1135,6 +1271,39 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "content_nodes"
             referencedColumns: ["node_id"]
+          },
+        ]
+      }
+      team_members: {
+        Row: {
+          joined_at: string
+          player_id: string
+          team_id: string
+        }
+        Insert: {
+          joined_at?: string
+          player_id: string
+          team_id: string
+        }
+        Update: {
+          joined_at?: string
+          player_id?: string
+          team_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_members_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "player"
+            referencedColumns: ["player_id"]
+          },
+          {
+            foreignKeyName: "team_members_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["team_id"]
           },
         ]
       }
@@ -1497,6 +1666,14 @@ export type Database = {
             }
             Returns: string
           }
+      combine_items: {
+        Args: { p_episode_id: string; p_recipe_id: string }
+        Returns: Json
+      }
+      create_team: {
+        Args: { p_episode_id: string; p_name: string }
+        Returns: string
+      }
       disablelongtransactions: { Args: never; Returns: string }
       dropgeometrycolumn:
         | {
@@ -1530,6 +1707,12 @@ export type Database = {
         | { Args: { table_name: string }; Returns: string }
       enablelongtransactions: { Args: never; Returns: string }
       equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      execute_exchange: {
+        Args: { p_session_id: string }
+        Returns: {
+          status: string
+        }[]
+      }
       geometry: { Args: { "": string }; Returns: unknown }
       geometry_above: {
         Args: { geom1: unknown; geom2: unknown }
@@ -1637,6 +1820,7 @@ export type Database = {
           user_id: string
         }[]
       }
+      get_my_team_ids: { Args: never; Returns: string[] }
       get_player_locations: {
         Args: { p_player_ids: string[] }
         Returns: {
@@ -1645,7 +1829,13 @@ export type Database = {
           user_id: string
         }[]
       }
+      get_teammate_player_ids: { Args: never; Returns: string[] }
       gettransactionid: { Args: never; Returns: unknown }
+      join_team: {
+        Args: { p_episode_id: string; p_team_id: string }
+        Returns: string
+      }
+      leave_team: { Args: { p_episode_id: string }; Returns: undefined }
       longtransactionsenabled: { Args: never; Returns: boolean }
       populate_geometry_columns:
         | { Args: { tbl_oid: unknown; use_typmod?: boolean }; Returns: number }
@@ -1687,6 +1877,10 @@ export type Database = {
       }
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
+      resolve_player_for_episode: {
+        Args: { p_episode_id: string }
+        Returns: string
+      }
       st_3dclosestpoint: {
         Args: { geom1: unknown; geom2: unknown }
         Returns: unknown
@@ -2296,6 +2490,21 @@ export type Database = {
         | "per_episode"
         | "per_adventure"
         | "global"
+      marker_interaction_type:
+        | "none"
+        | "claim_item"
+        | "narrative"
+        | "npc_dialog"
+        | "zone_effect"
+        | "team_unlock"
+      marker_type:
+        | "location"
+        | "clue"
+        | "npc"
+        | "entrance"
+        | "secret"
+        | "danger"
+        | "meeting_point"
       node_category:
         | "main_story"
         | "side_quest"
@@ -2454,6 +2663,23 @@ export const Constants = {
         "per_episode",
         "per_adventure",
         "global",
+      ],
+      marker_interaction_type: [
+        "none",
+        "claim_item",
+        "narrative",
+        "npc_dialog",
+        "zone_effect",
+        "team_unlock",
+      ],
+      marker_type: [
+        "location",
+        "clue",
+        "npc",
+        "entrance",
+        "secret",
+        "danger",
+        "meeting_point",
       ],
       node_category: [
         "main_story",

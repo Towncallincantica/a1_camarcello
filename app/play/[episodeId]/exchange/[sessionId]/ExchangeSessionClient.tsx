@@ -98,14 +98,14 @@ export function ExchangeSessionClient({
   function handleSelectItem(item: ItemInfo) {
     setMyItem(item)
     startTransition(async () => {
-      await selectItem(episodeId, sessionId, playerId, item.item_id)
+      await selectItem(episodeId, sessionId, item.item_id)
     })
   }
 
   function handleConfirm() {
     setMyConfirmed(true)
     startTransition(async () => {
-      await confirmExchange(episodeId, sessionId, playerId)
+      await confirmExchange(episodeId, sessionId)
     })
   }
 

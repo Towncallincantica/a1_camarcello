@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { ADVENTURE_ID } from '@/lib/constants'
 import GPSUploader from '@/components/GPSUploader'
 import { ExchangeRedirectListener } from '@/components/ExchangeRedirectListener'
+import EpisodeContextSetter from '@/components/EpisodeContextSetter'
 
 export default async function EpisodeLayout({
   children,
@@ -27,7 +28,7 @@ export default async function EpisodeLayout({
 
   return (
     <>
-      <GPSUploader />
+      <EpisodeContextSetter episodeId={episodeId} />
       <ExchangeRedirectListener
         playerId={player.player_id}
         episodeId={episodeId}

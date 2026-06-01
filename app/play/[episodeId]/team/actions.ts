@@ -4,87 +4,43 @@ import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
-export async function createTeam(
-  episodeId: string,
-  playerId: string,
-  formData: FormData
-) {
+// Identità derivata server-side dentro le RPC (auth.uid()): nessun playerId dal client.
+
+export async function createTeam(episodeId: string, formData: FormData) {
   const supabase = await createClient()
-  const name = formData.get('name') as string
+  const name = (formData.get('name') as string) ?? ''
 
-  const { data: team, error } = await supabase
-    .from('teams')
-    .insert({ episode_id: episodeId, name, created_by_player_id: playerId })
-    .select('team_id')
-    .single()
-
+  const { error } = await supabase.rpc('create_team', {
+    p_episode_id: episodeId,
+    p_name: name,
+  })
   if (error) throw new Error(error.message)
-
-  await Promise.all([
-    supabase
-      .from('player_episode_stats')
-      .update({ team_id: team.team_id })
-      .eq('player_id', playerId)
-      .eq('episode_id', episodeId),
-    supabase
-      .from('team_members')
-      .insert({ team_id: team.team_id, player_id: playerId }),
-  ])
 
   revalidatePath(`/play/${episodeId}/team`)
   redirect(`/play/${episodeId}/team`)
 }
 
-export async function joinTeam(
-  episodeId: string,
-  playerId: string,
-  formData: FormData
-) {
+export async function joinTeam(episodeId: string, formData: FormData) {
   const supabase = await createClient()
   const teamId = formData.get('team_id') as string
 
-  await Promise.all([
-    supabase
-      .from('player_episode_stats')
-      .update({ team_id: teamId })
-      .eq('player_id', playerId)
-      .eq('episode_id', episodeId),
-    supabase
-      .from('team_members')
-      .insert({ team_id: teamId, player_id: playerId }),
-  ])
+  const { error } = await supabase.rpc('join_team', {
+    p_episode_id: episodeId,
+    p_team_id: teamId,
+  })
+  if (error) throw new Error(error.message)
 
   revalidatePath(`/play/${episodeId}/team`)
   redirect(`/play/${episodeId}/team`)
 }
 
-export async function leaveTeam(
-  episodeId: string,
-  playerId: string,
-) {
+export async function leaveTeam(episodeId: string) {
   const supabase = await createClient()
 
-  const { data: stats } = await supabase
-    .from('player_episode_stats')
-    .select('team_id')
-    .eq('player_id', playerId)
-    .eq('episode_id', episodeId)
-    .single()
-
-  if (!stats?.team_id) return
-
-  await Promise.all([
-    supabase
-      .from('team_members')
-      .delete()
-      .eq('team_id', stats.team_id)
-      .eq('player_id', playerId),
-    supabase
-      .from('player_episode_stats')
-      .update({ team_id: null })
-      .eq('player_id', playerId)
-      .eq('episode_id', episodeId),
-  ])
+  const { error } = await supabase.rpc('leave_team', {
+    p_episode_id: episodeId,
+  })
+  if (error) throw new Error(error.message)
 
   revalidatePath(`/play/${episodeId}/team`)
   redirect(`/play/${episodeId}/team`)

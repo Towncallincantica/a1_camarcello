@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { createServiceRoleClient } from '@/lib/supabase/service'
+import { requirePlayer } from '@/lib/auth/requirePlayer'
 import { revalidatePath } from 'next/cache'
 
 // ============================================================
@@ -11,9 +12,10 @@ import { revalidatePath } from 'next/cache'
 
 export async function deleteItem(
   episodeId: string,
-  playerId: string,
   itemId: string
 ) {
+  const { player: me } = await requirePlayer()
+  const playerId = me.player_id
   const service = createServiceRoleClient()
 
   const { data: inv } = await service
@@ -204,14 +206,19 @@ async function applyNodeEffects(
         ? new Date(Date.now() + durationMinutes * 60 * 1000).toISOString()
         : null
 
+      // T9: upsert invece di insert. Il vincolo è ora
+      // UNIQUE(player_id, episode_id, status_type): riapplicare lo stesso
+      // status nello stesso episodio ne rinnova durata e timestamp,
+      // invece di andare in unique-violation.
       await service
         .from('player_status_effects')
-        .insert({
+        .upsert({
           player_id: playerId,
           episode_id: episodeId,
           status_type: statusType,
           expires_at: expiresAt,
-        })
+          applied_at: new Date().toISOString(),
+        }, { onConflict: 'player_id,episode_id,status_type' })
     }
   }
 }

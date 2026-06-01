@@ -1,24 +1,31 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { ADVENTURE_ID } from '@/lib/constants'
+import { createPlayerForUser } from '@/lib/player/createPlayer'
 
 async function createPlayer(formData: FormData) {
   'use server'
-  const display_name = formData.get('display_name') as string
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  await supabase.from('player').insert({
-    user_id: user.id,
-    adventure_id: ADVENTURE_ID,
-    display_name: display_name.trim(),
-  })
+  let errorMsg: string | null = null
+  try {
+    await createPlayerForUser(supabase, user.id, formData.get('display_name'))
+  } catch (e) {
+    errorMsg = e instanceof Error ? e.message : 'Nome non valido.'
+  }
+  if (errorMsg) redirect('/play?e=' + encodeURIComponent(errorMsg))
 
   redirect('/play')
 }
 
-export default async function PlayPage() {
+export default async function PlayPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ e?: string }>
+}) {
+  const { e: nameError } = await searchParams
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -162,6 +169,7 @@ export default async function PlayPage() {
                   name="display_name"
                   placeholder="Come vuoi essere chiamato?"
                   required
+                  maxLength={24}
                   autoComplete="off"
                   className="cm-input"
                 />
@@ -169,6 +177,12 @@ export default async function PlayPage() {
                   Dichiara la tua presenza
                 </button>
               </form>
+
+              {nameError && (
+                <p style={{ marginTop: '1rem', textAlign: 'center', color: '#e85555', fontSize: '0.82rem', fontFamily: "'EB Garamond', Georgia, serif" }}>
+                  {nameError}
+                </p>
+              )}
             </div>
 
             <p style={{ textAlign: 'center', marginTop: '2rem', fontFamily: "'EB Garamond', Georgia, serif", fontStyle: 'italic', fontSize: '0.8rem', color: 'rgba(232,228,220,0.18)' }}>
