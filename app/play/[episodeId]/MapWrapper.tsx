@@ -156,6 +156,7 @@ export default function MapWrapper({
   const [allRawMarkers, setAllRawMarkers] = useState<RawMarker[]>([])
   // Posizione locale grezza (dal detail di gps:ok) — usata SOLO per la prossimità.
   const [position, setPosition] = useState<{ lat: number; lng: number } | null>(null)
+  const [mapBlocked, setMapBlocked] = useState(false)
   // Marker forzati visibili da un reveal_marker (idempotenti: non persistono,
   // ma le visibility_rules dovrebbero comunque ri-rivelarli dopo un refresh).
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set())
@@ -194,32 +195,43 @@ export default function MapWrapper({
 
   // Carica inventario player + status effects
   const loadPlayerContext = useCallback(async () => {
-    const [inventoryRes, statusRes] = await Promise.all([
-      supabase
-        .from('player_episode_inventory')
-        .select('item_id')
-        .eq('player_id', playerId),
-      supabase
-        .from('player_status_effects')
-        .select('status_type, expires_at')
-        .eq('player_id', playerId),
-    ])
+  const [inventoryRes, statusRes] = await Promise.all([
+    supabase
+      .from('player_episode_inventory')
+      .select('item_id')
+      .eq('player_id', playerId),
+    supabase
+      .from('player_status_effects')
+      .select('status_type, expires_at, metadata')
+      .eq('player_id', playerId),
+  ])
 
-    const itemIds = new Set<string>(
-      (inventoryRes.data ?? []).map((r: { item_id: string }) => r.item_id)
-    )
+  const itemIds = new Set<string>(
+    (inventoryRes.data ?? []).map((r: { item_id: string }) => r.item_id)
+  )
 
-    const now = new Date()
-    const activeStatuses = new Set<string>(
-      (statusRes.data ?? [])
-        .filter((r: { expires_at: string | null }) =>
-          !r.expires_at || new Date(r.expires_at) > now
-        )
-        .map((r: { status_type: string }) => r.status_type)
-    )
+  const now = new Date()
+  const activeRows = (statusRes.data ?? []).filter(
+    (r: { expires_at: string | null }) => !r.expires_at || new Date(r.expires_at) > now
+  )
 
-    setEvalCtx(ctx => ({ ...ctx, playerInventoryItemIds: itemIds, activeStatusTypes: activeStatuses }))
-  }, [playerId, supabase])
+  const activeStatuses = new Set<string>(
+    activeRows.map((r: { status_type: string }) => r.status_type)
+  )
+
+  const blocksMap = activeRows.some(
+    (r: { metadata: { blocks?: string[] } | null }) =>
+      r.metadata?.blocks?.includes('can_use_map')
+  )
+
+  setMapBlocked(blocksMap)
+
+  setEvalCtx(ctx => ({
+    ...ctx,
+    playerInventoryItemIds: itemIds,
+    activeStatusTypes: activeStatuses,
+  }))
+}, [playerId, supabase])
 
   // Membri della squadra → user_id (per filtrare le posizioni di team_nearby).
   const loadTeamMembers = useCallback(async () => {
@@ -391,6 +403,24 @@ export default function MapWrapper({
     }, 60_000)
     return () => clearInterval(interval)
   }, [computeVisible])
+
+if (mapBlocked) {
+    return (
+      <div style={{
+        position: 'absolute', inset: 0, background: '#050505',
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        justifyContent: 'center', gap: 14, zIndex: 10,
+      }}>
+        <span style={{ fontSize: '2.5rem', opacity: 0.5 }}>🌑</span>
+        <span style={{
+          fontFamily: "'Cinzel', Georgia, serif", fontSize: '0.8rem',
+          letterSpacing: '0.1em', color: 'rgba(255,255,255,0.4)',
+        }}>
+          Non vedi nulla
+        </span>
+      </div>
+    )
+  }
 
   return (
     <MapView

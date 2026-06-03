@@ -1,5 +1,6 @@
 import { createServiceRoleClient } from '@/lib/supabase/service'
 import { ADVENTURE_ID } from '@/lib/constants'
+import { EffectControls } from './EffectControls'
 
 export default async function PlayersPage() {
   const supabase = createServiceRoleClient()
@@ -99,6 +100,12 @@ export default async function PlayersPage() {
                     ))}
                   </div>
                 )}
+
+                {/* Admin: applica effetti (test) */}
+                <EffectControls
+                  playerId={p.player_id}
+                  episodeId={episodes[0]?.episode_id ?? null}
+                />
               </div>
             )
           })}

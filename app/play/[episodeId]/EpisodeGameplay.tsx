@@ -168,6 +168,11 @@ export default function EpisodeGameplay({
   const [gpsStatus, setGpsStatus] = useState<'idle' | 'ok' | 'error'>('idle')
   const [gpsBlink, setGpsBlink] = useState(false)
 
+  const [statusEffects, setStatusEffects] = useState<{
+    status_effect_id: string; status_type: string; expires_at: string | null
+    metadata: { label?: string; icon?: string } | null
+  }[]>([])
+
   const qrCleanupRef = useRef<(() => void) | null>(null)
 
   // ── Sync inventoryItems prop → localInventory ──────────────────────────────
@@ -190,6 +195,41 @@ export default function EpisodeGameplay({
       window.removeEventListener('gps:error', onErr)
     }
   }, [])
+
+// ── Status effects + realtime ──────────────────────────────────────────────
+  useEffect(() => {
+    const active = (arr: typeof statusEffects) =>
+      arr.filter(e => !e.expires_at || new Date(e.expires_at) > new Date())
+
+    supabase
+      .from('player_status_effects')
+      .select('status_effect_id, status_type, expires_at, metadata')
+      .eq('player_id', player.player_id)
+      .eq('episode_id', episodeId)
+      .then(({ data }) => { if (data) setStatusEffects(active(data as typeof statusEffects)) })
+
+    const channel = supabase
+      .channel(`status_fx:${player.player_id}:${Math.random().toString(36).slice(2)}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'player_status_effects',
+        filter: `player_id=eq.${player.player_id}`,
+      }, (payload) => {
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { status_effect_id?: string }).status_effect_id
+          setStatusEffects(prev => prev.filter(e => e.status_effect_id !== id))
+          return
+        }
+        const fx = payload.new as typeof statusEffects[number] & { episode_id?: string }
+        if (fx.episode_id && fx.episode_id !== episodeId) return
+        setStatusEffects(prev =>
+          active([...prev.filter(e => e.status_effect_id !== fx.status_effect_id), fx]))
+      })
+      .subscribe()
+
+    const interval = setInterval(() => setStatusEffects(prev => active(prev)), 15000)
+    return () => { supabase.removeChannel(channel); clearInterval(interval) }
+  }, [supabase, player.player_id, episodeId])
+
 
   // ── Annunci Realtime ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -588,6 +628,16 @@ export default function EpisodeGameplay({
                 )}
               </div>
             </div>
+            {statusEffects.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, justifyContent: 'flex-end', marginTop: 2 }}>
+                {statusEffects.map(fx => (
+                  <span key={fx.status_effect_id} title={fx.metadata?.label ?? fx.status_type}
+                    style={{ fontSize: '0.7rem', lineHeight: 1 }}>
+                    {fx.metadata?.icon ?? '✨'}
+                  </span>
+                ))}
+              </div>
+            )}
           </a>
         </div>
 

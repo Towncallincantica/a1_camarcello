@@ -40,6 +40,16 @@ export async function claimItemByQR(
     .single()
   if (!player) return { success: false, error: 'Profilo giocatore non trovato.' }
 
+// Gate: un effetto attivo può impedire la raccolta (es. "immobilizzato")
+  const { data: canClaim } = await service.rpc('player_can', {
+    p_player_id: player.player_id,
+    p_episode_id: episodeId,
+    p_capability: 'can_claim',
+  })
+  if (canClaim === false)
+    return { success: false, error: 'Un effetto attivo ti impedisce di raccogliere oggetti.' }
+
+
   // Carica item
   const { data: item } = await service
     .from('items')

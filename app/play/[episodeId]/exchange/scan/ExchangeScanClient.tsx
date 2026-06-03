@@ -90,14 +90,14 @@ export function ExchangeScanClient({ episodeId, playerAId }: Props) {
                 setProcessing(false)
                 return
               }
-              try {
-                const sessionId = await initiateExchange(episodeId, parsed.player_id)
-                router.push(`/play/${episodeId}/exchange/${sessionId}`)
-              } catch (err) {
-                setError(err instanceof Error ? err.message : 'Errore durante lo scambio.')
+              const res = await initiateExchange(episodeId, parsed.player_id)
+              if (!res.ok) {
+                setError(res.error)
                 hasScanned.current = false
                 setProcessing(false)
+                return
               }
+              router.push(`/play/${episodeId}/exchange/${res.sessionId}`)
               return
             }
 

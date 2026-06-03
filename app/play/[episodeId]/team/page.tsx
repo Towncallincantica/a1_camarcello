@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { ADVENTURE_ID } from '@/lib/constants'
 import { TeamChat } from './TeamChat'
-import { createTeam, joinTeam, leaveTeam } from './actions'
+import { CreateTeamForm, JoinTeamList, LeaveTeamButton } from './TeamActions'
 
 export default async function TeamPage({
   params,
@@ -66,11 +66,6 @@ export default async function TeamPage({
         .eq('episode_id', episodeId)
     : { data: [] }
 
-  // Identità derivata server-side nelle RPC: bind solo episodeId.
-  const createTeamWithIds = createTeam.bind(null, episodeId)
-  const joinTeamWithIds = joinTeam.bind(null, episodeId)
-  const leaveTeamWithIds = leaveTeam.bind(null, episodeId)
-
   return (
     <main style={{
       height: '100vh',
@@ -103,22 +98,7 @@ export default async function TeamPage({
         <span style={{ color: '#feeaa5', fontSize: '0.85rem', letterSpacing: '0.06em', flex: 1 }}>
           {teamData.data ? teamData.data.name : 'Team'}
         </span>
-        {teamId && (
-          <form action={leaveTeamWithIds}>
-            <button type="submit" style={{
-              background: 'transparent',
-              border: '1px solid rgba(232,85,85,0.25)',
-              color: 'rgba(232,85,85,0.6)',
-              padding: '0.35rem 0.75rem',
-              fontFamily: 'Georgia, serif',
-              fontSize: '0.72rem',
-              cursor: 'pointer',
-              letterSpacing: '0.04em',
-            }}>
-              Lascia
-            </button>
-          </form>
-        )}
+        {teamId && <LeaveTeamButton episodeId={episodeId} />}
       </div>
 
       {/* Nessun team — crea o unisciti */}
@@ -130,35 +110,7 @@ export default async function TeamPage({
             <h2 style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.7rem', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '1rem' }}>
               Crea team
             </h2>
-            <form action={createTeamWithIds} style={{ display: 'flex', gap: '0.75rem' }}>
-              <input
-                name="name"
-                required
-                placeholder="Nome del team"
-                style={{
-                  flex: 1,
-                  background: 'rgba(255,255,255,0.03)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  padding: '0.75rem 1rem',
-                  color: '#e8e4dc',
-                  fontFamily: 'Georgia, serif',
-                  fontSize: '0.9rem',
-                  outline: 'none',
-                }}
-              />
-              <button type="submit" style={{
-                background: 'rgba(254,234,165,0.08)',
-                border: '1px solid rgba(254,234,165,0.3)',
-                color: '#feeaa5',
-                padding: '0.75rem 1.25rem',
-                fontFamily: 'Georgia, serif',
-                fontSize: '0.85rem',
-                cursor: 'pointer',
-                letterSpacing: '0.05em',
-              }}>
-                Crea
-              </button>
-            </form>
+            <CreateTeamForm episodeId={episodeId} />
           </section>
 
           {/* Unisciti a team esistente */}
@@ -167,30 +119,7 @@ export default async function TeamPage({
               <h2 style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.7rem', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '1rem' }}>
                 Unisciti a un team
               </h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {availableTeams.map((t) => (
-                  <form key={t.team_id} action={joinTeamWithIds}>
-                    <input type="hidden" name="team_id" value={t.team_id} />
-                    <button type="submit" style={{
-                      width: '100%',
-                      textAlign: 'left',
-                      background: 'rgba(255,255,255,0.02)',
-                      border: '1px solid rgba(255,255,255,0.07)',
-                      color: '#e8e4dc',
-                      padding: '0.875rem 1rem',
-                      fontFamily: 'Georgia, serif',
-                      fontSize: '0.9rem',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}>
-                      <span>{t.name}</span>
-                      <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.8rem' }}>Entra →</span>
-                    </button>
-                  </form>
-                ))}
-              </div>
+              <JoinTeamList episodeId={episodeId} teams={availableTeams} />
             </section>
           )}
         </div>

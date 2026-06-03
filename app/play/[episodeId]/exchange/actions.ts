@@ -5,18 +5,46 @@ import { requirePlayer } from '@/lib/auth/requirePlayer'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
-// Avvia una sessione di scambio. Il chiamante è SEMPRE player A (ricavato dalla sessione).
-// Il client passa solo l'altro giocatore.
+export type InitiateResult =
+  | { ok: true; sessionId: string }
+  | { ok: false; error: string }
+
+async function assertCan(
+  service: ReturnType<typeof createServiceRoleClient>,
+  playerId: string,
+  episodeId: string,
+  capability: string,
+  blockedMessage: string
+) {
+  const { data: allowed, error } = await service.rpc('player_can', {
+    p_player_id: playerId,
+    p_episode_id: episodeId,
+    p_capability: capability,
+  })
+  if (error) throw new Error(error.message)
+  if (allowed === false) throw new Error(blockedMessage)
+}
+
+// Avvia una sessione di scambio. Ritorna un result (non lancia).
 export async function initiateExchange(
   episodeId: string,
   otherPlayerId: string
-): Promise<string> {
+): Promise<InitiateResult> {
   const { player: me } = await requirePlayer()
   const service = createServiceRoleClient()
 
-  if (otherPlayerId === me.player_id) throw new Error('Non puoi scambiare con te stesso.')
+  if (otherPlayerId === me.player_id)
+    return { ok: false, error: 'Non puoi scambiare con te stesso.' }
 
-  // Entrambi devono partecipare all'episodio
+  const { data: allowed, error: gateErr } = await service.rpc('player_can', {
+    p_player_id: me.player_id,
+    p_episode_id: episodeId,
+    p_capability: 'can_exchange',
+  })
+  if (gateErr) return { ok: false, error: gateErr.message }
+  if (allowed === false)
+    return { ok: false, error: 'Un effetto attivo ti impedisce di scambiare.' }
+
   const { data: stats } = await service
     .from('player_episode_stats')
     .select('player_id')
@@ -24,9 +52,8 @@ export async function initiateExchange(
     .in('player_id', [me.player_id, otherPlayerId])
 
   const ids = new Set((stats ?? []).map((s) => s.player_id))
-  if (!ids.has(me.player_id) || !ids.has(otherPlayerId)) {
-    throw new Error('Giocatore non trovato in questo episodio.')
-  }
+  if (!ids.has(me.player_id) || !ids.has(otherPlayerId))
+    return { ok: false, error: 'Giocatore non trovato in questo episodio.' }
 
   const { data: session, error } = await service
     .from('exchange_sessions')
@@ -39,12 +66,11 @@ export async function initiateExchange(
     .select('session_id')
     .single()
 
-  if (error) throw new Error(error.message)
+  if (error) return { ok: false, error: error.message }
 
-  return session.session_id
+  return { ok: true, sessionId: session.session_id }
 }
 
-// Seleziona l'item da offrire. Il lato (A o B) è ricavato dall'identità, non dal client.
 export async function selectItem(
   episodeId: string,
   sessionId: string,
@@ -65,7 +91,6 @@ export async function selectItem(
   const isB = session.player_b_id === me.player_id
   if (!isA && !isB) throw new Error('Non sei parte di questo scambio.')
 
-  // Devi possedere l'item che offri
   const { data: owned } = await service
     .from('player_episode_inventory')
     .select('quantity')
@@ -77,8 +102,6 @@ export async function selectItem(
   if (!owned || owned.quantity < 1) throw new Error('Non possiedi questo oggetto.')
 
   const field = isA ? 'player_a_item_id' : 'player_b_item_id'
-
-  // Selezionare un nuovo item invalida le conferme precedenti
   const confirmReset = isA
     ? { player_a_confirmed: false }
     : { player_b_confirmed: false }
@@ -93,13 +116,15 @@ export async function selectItem(
   revalidatePath(`/play/${episodeId}/exchange/${sessionId}`)
 }
 
-// Conferma lo scambio. Il lato è ricavato dall'identità.
 export async function confirmExchange(
   episodeId: string,
   sessionId: string
 ) {
   const { player: me } = await requirePlayer()
   const service = createServiceRoleClient()
+
+  await assertCan(service, me.player_id, episodeId, 'can_exchange',
+    'Un effetto attivo ti impedisce di scambiare.')
 
   const { data: session } = await service
     .from('exchange_sessions')
@@ -124,10 +149,6 @@ export async function confirmExchange(
 
   if (error) throw new Error(error.message)
 
-  // Quando entrambi hanno confermato → esecuzione ATOMICA via RPC SECURITY DEFINER.
-  // Lock di riga + guardie quantity >= 1: niente double-spend sotto concorrenza.
-  // L'RPC ri-verifica internamente stato e conferme (non si fida di questa chiamata)
-  // ed è idempotente se la sessione è già 'completed'.
   if (updated.player_a_confirmed && updated.player_b_confirmed) {
     const { error: rpcError } = await service.rpc('execute_exchange', {
       p_session_id: sessionId,
@@ -138,7 +159,6 @@ export async function confirmExchange(
   revalidatePath(`/play/${episodeId}/exchange/${sessionId}`)
 }
 
-// Annulla lo scambio. Solo un partecipante può annullare.
 export async function cancelExchange(
   episodeId: string,
   sessionId: string

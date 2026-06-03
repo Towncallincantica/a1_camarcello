@@ -24,6 +24,7 @@ export function TeamChat({ teamId, episodeId, playerId, displayName, initialMess
   const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
+  const [blocked, setBlocked] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const supabase = useMemo(() => createClient(), [])
   // Cache display_name per player_id già risolti
@@ -86,8 +87,19 @@ export function TeamChat({ teamId, episodeId, playerId, displayName, initialMess
     const content = text.trim()
     if (!content || sending) return
 
-    setText('')
     setSending(true)
+    const { data: canChat } = await supabase.rpc('player_can', {
+      p_player_id: playerId,
+      p_episode_id: episodeId,
+      p_capability: 'can_chat',
+    })
+    if (canChat === false) {
+      setBlocked(true)
+      setSending(false)
+      return
+    }
+
+    setText('')
     await supabase.from('team_messages').insert({
       team_id: teamId,
       episode_id: episodeId,
@@ -165,6 +177,15 @@ export function TeamChat({ teamId, episodeId, playerId, displayName, initialMess
         })}
         <div ref={bottomRef} />
       </div>
+
+      {blocked && (
+        <div style={{
+          padding: '0.5rem 1.5rem', color: '#e85555', fontSize: '0.78rem',
+          background: 'rgba(232,85,85,0.08)', borderTop: '1px solid rgba(232,85,85,0.2)',
+        }}>
+          Un effetto attivo ti impedisce di parlare.
+        </div>
+      )}
 
       {/* Input */}
       <form
