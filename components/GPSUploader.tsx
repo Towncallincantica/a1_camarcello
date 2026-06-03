@@ -38,7 +38,9 @@ export default function GPSUploader() {
           if (!userId) return
 
           // SubBar reattiva a ogni fix valido, indipendentemente dal throttle DB.
-          window.dispatchEvent(new CustomEvent('gps:ok'))
+          window.dispatchEvent(new CustomEvent('gps:ok', {
+            detail: { lat: pos.coords.latitude, lng: pos.coords.longitude },
+          }))
 
           // Throttle delle scritture.
           const now = Date.now()

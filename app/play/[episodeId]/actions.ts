@@ -6,14 +6,10 @@ import { requirePlayer } from '@/lib/auth/requirePlayer'
 import { revalidatePath } from 'next/cache'
 
 // ============================================================
-// COMPLETE TARGET
+// DELETE ITEM (inventario)
 // ============================================================
 
-
-export async function deleteItem(
-  episodeId: string,
-  itemId: string
-) {
+export async function deleteItem(episodeId: string, itemId: string) {
   const { player: me } = await requirePlayer()
   const playerId = me.player_id
   const service = createServiceRoleClient()
@@ -47,6 +43,9 @@ export async function deleteItem(
   revalidatePath(`/play/${episodeId}/inventory`)
 }
 
+// ============================================================
+// COMPLETE TARGET
+// ============================================================
 
 export async function completeTarget(
   episodeId: string,
@@ -57,7 +56,6 @@ export async function completeTarget(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Not authenticated')
 
-  // Recupera player
   const { data: player } = await supabase
     .from('player')
     .select('player_id')
@@ -80,7 +78,7 @@ export async function completeTarget(
 
   if (progressError) throw new Error(progressError.message)
 
-  // Controlla se tutti i target del nodo sono completati
+  // Tutti i target del nodo completati?
   const { data: allTargets } = await service
     .from('targets')
     .select('target_id')
@@ -89,6 +87,7 @@ export async function completeTarget(
 
   if (!allTargets || allTargets.length === 0) {
     revalidatePath(`/play/${episodeId}`)
+    revalidatePath(`/play/${episodeId}/node/${nodeId}`)
     return
   }
 
@@ -100,18 +99,23 @@ export async function completeTarget(
     .eq('completed', true)
     .in('target_id', allTargets.map((t) => t.target_id))
 
-  const allDone =
-    completedTargets?.length === allTargets.length
+  const allDone = completedTargets?.length === allTargets.length
 
   if (allDone) {
     await applyNodeEffects(episodeId, nodeId, player.player_id, service)
   }
 
   revalidatePath(`/play/${episodeId}`)
+  revalidatePath(`/play/${episodeId}/node/${nodeId}`)
 }
 
 // ============================================================
 // APPLY NODE EFFECTS (interno)
+// Vocabolario canonico = quello scritto dall'admin (createEffect):
+//   give_item          { item_id, quantity }
+//   give_xp            { amount }
+//   give_status        { status_type, duration_minutes }
+//   give_progress_item { progress_item_id }
 // ============================================================
 
 async function applyNodeEffects(
@@ -129,9 +133,10 @@ async function applyNodeEffects(
   if (!effects || effects.length === 0) return
 
   for (const effect of effects) {
-    const payload = effect.payload as Record<string, unknown>
+    const payload = (effect.payload ?? {}) as Record<string, unknown>
 
-    if (effect.type === 'grant_progress_item') {
+    // ── give_progress_item ───────────────────────────────────
+    if (effect.type === 'give_progress_item') {
       const progressItemId = payload.progress_item_id as string
       if (!progressItemId) continue
 
@@ -143,19 +148,19 @@ async function applyNodeEffects(
           episode_id: episodeId,
         }, { onConflict: 'player_id,progress_item_id,episode_id' })
 
-    } else if (effect.type === 'grant_inventory_item') {
+    // ── give_item ────────────────────────────────────────────
+    } else if (effect.type === 'give_item') {
       const itemId = payload.item_id as string
       const quantity = (payload.quantity as number) ?? 1
       if (!itemId) continue
 
-      // Upsert: se esiste già, somma la quantità
       const { data: existing } = await service
         .from('player_episode_inventory')
         .select('quantity')
         .eq('player_id', playerId)
         .eq('item_id', itemId)
         .eq('episode_id', episodeId)
-        .single()
+        .maybeSingle()
 
       if (existing) {
         await service
@@ -175,29 +180,26 @@ async function applyNodeEffects(
           })
       }
 
-    } else if (effect.type === 'modify_stat') {
-      const stat = payload.stat as string
-      const value = payload.value as number
-      if (!stat || value == null) continue
+    // ── give_xp ──────────────────────────────────────────────
+    } else if (effect.type === 'give_xp') {
+      const amount = payload.amount as number
+      if (amount == null) continue
 
-      // Supporta solo experience_points e level per ora
-      if (stat === 'experience_points' || stat === 'level') {
-        const { data: player } = await service
+      const { data: p } = await service
+        .from('player')
+        .select('experience_points')
+        .eq('player_id', playerId)
+        .single()
+
+      if (p) {
+        await service
           .from('player')
-          .select(stat)
+          .update({ experience_points: (p.experience_points ?? 0) + amount })
           .eq('player_id', playerId)
-          .single()
-
-        if (player) {
-          const current = (player as Record<string, number>)[stat] ?? 0
-          await service
-            .from('player')
-            .update({ [stat]: current + value })
-            .eq('player_id', playerId)
-        }
       }
 
-    } else if (effect.type === 'add_status_effect') {
+    // ── give_status ──────────────────────────────────────────
+    } else if (effect.type === 'give_status') {
       const statusType = payload.status_type as string
       const durationMinutes = payload.duration_minutes as number | null
       if (!statusType) continue
@@ -206,10 +208,6 @@ async function applyNodeEffects(
         ? new Date(Date.now() + durationMinutes * 60 * 1000).toISOString()
         : null
 
-      // T9: upsert invece di insert. Il vincolo è ora
-      // UNIQUE(player_id, episode_id, status_type): riapplicare lo stesso
-      // status nello stesso episodio ne rinnova durata e timestamp,
-      // invece di andare in unique-violation.
       await service
         .from('player_status_effects')
         .upsert({
@@ -224,10 +222,11 @@ async function applyNodeEffects(
 }
 
 // ============================================================
-// VERIFY TARGET — helpers per i tipi specifici
+// VERIFY TARGET — helpers
 // ============================================================
 
-// Verifica codice (code_entry e qr_scan)
+// code_entry e qr_scan. Admin salva code_entry come {code}, qr_scan come
+// {qr_code}: leggiamo entrambe le chiavi per robustezza.
 export async function verifyCode(
   episodeId: string,
   nodeId: string,
@@ -244,8 +243,8 @@ export async function verifyCode(
 
   if (!target) throw new Error('Target not found')
 
-  const payload = target.payload as Record<string, unknown>
-  const expectedCode = payload.code as string
+  const payload = (target.payload ?? {}) as Record<string, unknown>
+  const expectedCode = (payload.code ?? payload.qr_code) as string | undefined
 
   if (!expectedCode) throw new Error('Target has no code')
   if (inputCode.trim().toUpperCase() !== expectedCode.trim().toUpperCase()) {
@@ -256,7 +255,8 @@ export async function verifyCode(
   return { success: true }
 }
 
-// Verifica GPS proximity
+// GPS proximity. Admin salva {radius_meters}: leggiamo anche il vecchio
+// radius_m come fallback.
 export async function verifyGPS(
   episodeId: string,
   nodeId: string,
@@ -274,10 +274,10 @@ export async function verifyGPS(
 
   if (!target) throw new Error('Target not found')
 
-  const payload = target.payload as Record<string, unknown>
+  const payload = (target.payload ?? {}) as Record<string, unknown>
   const targetLat = payload.lat as number
   const targetLng = payload.lng as number
-  const radiusM = (payload.radius_m as number) ?? 30
+  const radiusM = (payload.radius_meters ?? payload.radius_m ?? 30) as number
 
   const distance = haversineDistance(playerLat, playerLng, targetLat, targetLng)
 

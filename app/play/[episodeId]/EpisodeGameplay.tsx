@@ -5,7 +5,8 @@ import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { TeamChat } from './team/TeamChat'
 import { deleteItem } from './actions'
-import { claimItemByQR, type ClaimResult } from './qrActions'
+import { claimItemByQR, applyMarkerOnEnter, type ClaimResult } from './qrActions'
+import { giveProgressItem } from './progressActions'
 import { createClient } from '@/lib/supabase/client'
 import { initiateExchange } from './exchange/actions'
 
@@ -101,13 +102,6 @@ type Props = {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const TARGET_LABELS: Record<string, string> = {
-  code_entry: 'Codice',
-  qr_scan: 'QR Code',
-  gps_location: 'Posizione GPS',
-  claim_item: 'Raccogli oggetto',
-}
-
 
 const C = {
   bg: '#090807',
@@ -157,6 +151,8 @@ export default function EpisodeGameplay({
   const [qrError, setQrError] = useState<string | null>(null)
   const [claimedItem, setClaimedItem] = useState<Extract<ClaimResult, { success: true }>['item'] | null>(null)
   const popupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [talkFeedback, setTalkFeedback] = useState<string | null>(null)
+  const talkFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
   const [popupMode, setPopupMode] = useState<PopupMode | null>(null)
   const [localInventory, setLocalInventory] = useState<InventoryItem[]>(inventoryItems)
@@ -165,7 +161,6 @@ export default function EpisodeGameplay({
   const [announcements, setAnnouncements] = useState<Announcement[]>(initialAnnouncements)
   const [showAnnouncementsPopup, setShowAnnouncementsPopup] = useState(false)
   const supabase = useMemo(() => createClient(), [])
-  const teamMemberIds = useMemo(() => teamId ? [teamId] : [], [teamId])
   const router = useRouter()
   const exchangeStarting = useRef(false)
 
@@ -348,6 +343,97 @@ export default function EpisodeGameplay({
     router.push(`/play/${episodeId}/combine?preselect=${selectedItem.item_id}`)
   }
 
+  // ── Map claim (da marker mappa) ───────────────────────────────────────────
+  const handleMapClaim = async (itemId: string) => {
+    const result = await claimItemByQR(episodeId, itemId)
+    if (result.success) {
+      setClaimedItem(result.item)
+      setLocalInventory(prev => {
+        const existing = prev.find(i => i.item_id === result.item.item_id)
+        if (existing) return prev.map(i => i.item_id === result.item.item_id ? { ...i, quantity: i.quantity + 1 } : i)
+        return [...prev, { ...result.item, quantity: 1 }]
+      })
+      if (popupTimerRef.current) clearTimeout(popupTimerRef.current)
+      popupTimerRef.current = setTimeout(() => setClaimedItem(null), 5000)
+    } else {
+      setQrError(result.error)
+      if (popupTimerRef.current) clearTimeout(popupTimerRef.current)
+      popupTimerRef.current = setTimeout(() => setQrError(null), 4000)
+    }
+  }
+
+  // ── Map talk (da marker narrative/npc_dialog) ─────────────────────────────
+  // Assegna il progress item. Se il progress item punta a un nodo → naviga
+  // alla pagina-nodo (che rileggerà player_steps e passerà il gate).
+  // Se node_id è null (flag puro) → resta sulla mappa con feedback configurabile.
+  const handleTalk = async (progressItemId: string, feedback?: string) => {
+    const result = await giveProgressItem(episodeId, progressItemId)
+    if (result.success) {
+      if (result.nodeId) {
+        router.push(`/play/${episodeId}/node/${result.nodeId}`)
+      } else {
+        setTalkFeedback(feedback?.trim() || '✓ Fatto')
+        if (talkFeedbackTimerRef.current) clearTimeout(talkFeedbackTimerRef.current)
+        talkFeedbackTimerRef.current = setTimeout(() => setTalkFeedback(null), 5000)
+      }
+    } else {
+      setQrError(result.error)
+      if (popupTimerRef.current) clearTimeout(popupTimerRef.current)
+      popupTimerRef.current = setTimeout(() => setQrError(null), 4000)
+    }
+  }
+
+  // ── Prossimità: effetti persistenti (apply_effect via markerId) ───────────
+  // Il server rilegge le azioni del marker e applica gli item. Riuso il popup
+  // claim per ogni item ottenuto.
+  const handleProximityEffect = async (markerId: string) => {
+    const res = await applyMarkerOnEnter(episodeId, markerId)
+    if (!res.success) {
+      setQrError(res.error)
+      if (popupTimerRef.current) clearTimeout(popupTimerRef.current)
+      popupTimerRef.current = setTimeout(() => setQrError(null), 4000)
+      return
+    }
+    for (const c of res.claimed) {
+      if (!c.success) continue
+      const ci = c.item
+      setClaimedItem(ci)
+      setLocalInventory(prev => {
+        const existing = prev.find(i => i.item_id === ci.item_id)
+        if (existing) return prev.map(i => i.item_id === ci.item_id ? { ...i, quantity: i.quantity + 1 } : i)
+        return [...prev, {
+          item_id: ci.item_id, name: ci.name,
+          description: ci.description ?? null,
+          image_url: ci.image_url ?? ci.icon_url ?? null,
+          quantity: 1, rarity: ci.rarity,
+        }]
+      })
+    }
+    if (res.claimed.some(c => c.success)) {
+      if (popupTimerRef.current) clearTimeout(popupTimerRef.current)
+      popupTimerRef.current = setTimeout(() => setClaimedItem(null), 5000)
+    }
+  }
+
+  // ── Prossimità: narrativa cosmetica ───────────────────────────────────────
+  // Riuso il popup "📖" (talkFeedback). 'once' usa localStorage per non
+  // ri-mostrarla dopo un refresh (zero DB).
+  const handleProximityNarrative = (n: { title?: string; content: string; key: string; once: boolean }) => {
+    if (n.once && typeof window !== 'undefined') {
+      const seenKey = `seen:${n.key}`
+      if (localStorage.getItem(seenKey)) return
+      localStorage.setItem(seenKey, '1')
+    }
+    setTalkFeedback(n.content)
+    if (talkFeedbackTimerRef.current) clearTimeout(talkFeedbackTimerRef.current)
+    talkFeedbackTimerRef.current = setTimeout(() => setTalkFeedback(null), 5000)
+  }
+
+  // ── Prossimità: completamento target (stub — i target arrivano dopo) ───────
+  const handleProximityCompleteTarget = async (_targetId: string) => {
+    // TODO: implementare quando il sistema target sarà pronto.
+  }
+
   // ── Active mission ─────────────────────────────────────────────────────────
   const activeMission = nodes.find(n =>
     n.targets.length > 0 && !n.targets.every(t => completedTargets.has(t.target_id))
@@ -390,7 +476,12 @@ export default function EpisodeGameplay({
           currentUserId={currentUserId}
           playerId={player.player_id}
           playerLevel={player.level}
-          teamMemberIds={teamMemberIds}
+          teamId={teamId}
+          onClaimItem={handleMapClaim}
+          onTalk={handleTalk}
+          onNarrative={handleProximityNarrative}
+          onApplyEffect={handleProximityEffect}
+          onCompleteTarget={handleProximityCompleteTarget}
         />
 
         {/* Top bar sovrapposta */}
@@ -703,81 +794,6 @@ export default function EpisodeGameplay({
               </div>
             )}
 
-            {/* ── POPUP ITEM RACCOLTO ─────────────────────────────────────── */}
-            {claimedItem && (() => {
-              const rColor = rarityColors[claimedItem.rarity ?? 'common'] ?? C.muted
-              return (
-                <div style={{
-                  position: 'fixed', inset: 0, zIndex: 300,
-                  background: 'rgba(0,0,0,0.82)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem',
-                }} onClick={() => setClaimedItem(null)}>
-                  <style>{`
-                    @keyframes itemFadeIn { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
-                    @keyframes drainBar { from { width:100%; } to { width:0%; } }
-                  `}</style>
-                  <div onClick={e => e.stopPropagation()} style={{
-                    background: '#111009', border: `1px solid ${rColor}55`,
-                    boxShadow: `0 0 32px ${rColor}22`, borderRadius: 12,
-                    padding: '2rem 1.5rem', width: '100%', maxWidth: 300,
-                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem',
-                    animation: 'itemFadeIn 0.3s ease',
-                  }}>
-                    <div style={{
-                      width: 110, height: 110,
-                      border: `1px solid ${rColor}55`, boxShadow: `0 0 20px ${rColor}33`,
-                      background: 'rgba(255,255,255,0.02)', borderRadius: 8,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-                    }}>
-                      {claimedItem.image_url || claimedItem.icon_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={claimedItem.image_url ?? claimedItem.icon_url ?? ''}
-                          alt={claimedItem.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      ) : (
-                        <span style={{ fontSize: '2.5rem', color: rColor, opacity: 0.4 }}>◈</span>
-                      )}
-                    </div>
-                    <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <span style={{ fontFamily: C.fontCinzel, fontSize: '0.55rem', letterSpacing: '0.14em', color: rColor, textTransform: 'uppercase' }}>
-                        {claimedItem.rarity}
-                      </span>
-                      <span style={{ fontFamily: C.fontCinzel, fontSize: '1rem', color: C.gold }}>
-                        {claimedItem.name}
-                      </span>
-                      {claimedItem.description && (
-                        <span style={{ fontFamily: C.fontGaramond, fontSize: '0.85rem', color: C.muted, lineHeight: 1.5 }}>
-                          {claimedItem.description}
-                        </span>
-                      )}
-                    </div>
-                    <span style={{ fontFamily: C.fontCinzel, fontSize: '0.48rem', letterSpacing: '0.12em', color: C.muted2 }}>
-                      AGGIUNTO ALL'INVENTARIO
-                    </span>
-                    <a
-                      href={`/play/${episodeId}/inventory`}
-                      style={{
-                        textDecoration: 'none',
-                        textAlign: 'center',
-                        padding: '0.55rem 1rem',
-                        border: `1px solid ${rColor}55`,
-                        background: `${rColor}11`,
-                        color: C.gold,
-                        fontFamily: C.fontCinzel,
-                        fontSize: '0.7rem',
-                        letterSpacing: '0.1em',
-                        textTransform: 'uppercase',
-                      }}
-                    >
-                      Vedi inventario
-                    </a>
-                    <div style={{ width: '100%', height: 2, background: 'rgba(255,255,255,0.07)', borderRadius: 1, overflow: 'hidden' }}>
-                      <div style={{ height: '100%', background: rColor, animation: 'drainBar 5s linear forwards' }} />
-                    </div>
-                  </div>
-                </div>
-              )
-            })()}
-
             {/* TAB: BORSA */}
             {activeTab === 'borsa' && (
               <div style={{ flex: 1, overflowY: 'auto', padding: '4px 14px 14px' }}>
@@ -1074,6 +1090,100 @@ export default function EpisodeGameplay({
         </div>
       )}
 
+      {/* ══ POPUP ITEM RACCOLTO ════════════════════════════════════════════ */}
+      {claimedItem && (() => {
+        const rColor = rarityColors[claimedItem.rarity ?? 'common'] ?? C.muted
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 400,
+            background: 'rgba(0,0,0,0.82)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem',
+          }} onClick={() => setClaimedItem(null)}>
+            <style>{`
+              @keyframes itemFadeIn { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+              @keyframes drainBar { from { width:100%; } to { width:0%; } }
+            `}</style>
+            <div onClick={e => e.stopPropagation()} style={{
+              background: '#111009', border: `1px solid ${rColor}55`,
+              boxShadow: `0 0 32px ${rColor}22`, borderRadius: 12,
+              padding: '2rem 1.5rem', width: '100%', maxWidth: 300,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem',
+              animation: 'itemFadeIn 0.3s ease',
+            }}>
+              <div style={{
+                width: 110, height: 110,
+                border: `1px solid ${rColor}55`, boxShadow: `0 0 20px ${rColor}33`,
+                background: 'rgba(255,255,255,0.02)', borderRadius: 8,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+              }}>
+                {claimedItem.image_url || claimedItem.icon_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={claimedItem.image_url ?? claimedItem.icon_url ?? ''}
+                    alt={claimedItem.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <span style={{ fontSize: '2.5rem', color: rColor, opacity: 0.4 }}>◈</span>
+                )}
+              </div>
+              <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontFamily: C.fontCinzel, fontSize: '0.55rem', letterSpacing: '0.14em', color: rColor, textTransform: 'uppercase' }}>
+                  {claimedItem.rarity}
+                </span>
+                <span style={{ fontFamily: C.fontCinzel, fontSize: '1rem', color: C.gold }}>
+                  {claimedItem.name}
+                </span>
+                {claimedItem.description && (
+                  <span style={{ fontFamily: C.fontGaramond, fontSize: '0.85rem', color: C.muted, lineHeight: 1.5 }}>
+                    {claimedItem.description}
+                  </span>
+                )}
+              </div>
+              <span style={{ fontFamily: C.fontCinzel, fontSize: '0.48rem', letterSpacing: '0.12em', color: C.muted2 }}>
+                AGGIUNTO ALL'INVENTARIO
+              </span>
+              <div style={{ width: '100%', height: 2, background: 'rgba(255,255,255,0.07)', borderRadius: 1, overflow: 'hidden' }}>
+                <div style={{ height: '100%', background: rColor, animation: 'drainBar 5s linear forwards' }} />
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* ══ POPUP FEEDBACK "PARLA" (flag senza nodo) ══════════════════════ */}
+      {talkFeedback && (
+        <div
+          onClick={() => setTalkFeedback(null)}
+          style={{
+            position: 'fixed', inset: 0,
+            background: 'rgba(0,0,0,0.72)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 200, padding: '1.5rem',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#111009',
+              border: '1px solid rgba(254,234,165,0.18)',
+              borderRadius: 10,
+              maxWidth: 380,
+              padding: '1.5rem 1.5rem 1.25rem',
+              display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center',
+            }}
+          >
+            <span style={{ fontSize: '1.6rem', opacity: 0.8 }}>📖</span>
+            <p style={{
+              fontFamily: C.fontGaramond, fontSize: '1.02rem', lineHeight: 1.6,
+              color: C.text, textAlign: 'center', margin: 0,
+            }}>
+              {talkFeedback}
+            </p>
+            <div style={{ width: '100%', height: 2, background: 'rgba(255,255,255,0.07)', borderRadius: 1, overflow: 'hidden' }}>
+              <div style={{ height: '100%', background: C.gold, animation: 'drainBar 5s linear forwards' }} />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ══ POPUP ANNUNCI ══════════════════════════════════════════════════ */}
       {showAnnouncementsPopup && (
         <div
@@ -1173,70 +1283,40 @@ function JoinPrompt({ joining, onJoin, compact = false }: {
 function NodeCard({ node, done, completedTargets, episodeId }: {
   node: ContentNode; done: boolean; completedTargets: Set<string>; episodeId: string
 }) {
+  const total = node.targets.length
+  const doneCount = node.targets.filter(t => completedTargets.has(t.target_id)).length
+
   return (
-    <div style={{
-      background: 'rgba(255,255,255,0.02)',
-      border: `1px solid ${done ? 'rgba(100,210,120,0.22)' : 'rgba(255,255,255,0.07)'}`,
-      borderLeft: `3px solid ${done ? '#64d278' : 'rgba(254,234,165,0.28)'}`,
-      borderRadius: 7, padding: '10px 11px', marginBottom: 9,
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+    <a
+      href={`/play/${episodeId}/node/${node.node_id}`}
+      style={{
+        display: 'block', textDecoration: 'none',
+        background: 'rgba(255,255,255,0.02)',
+        border: `1px solid ${done ? 'rgba(100,210,120,0.22)' : 'rgba(255,255,255,0.07)'}`,
+        borderLeft: `3px solid ${done ? '#64d278' : 'rgba(254,234,165,0.28)'}`,
+        borderRadius: 7, padding: '11px 12px', marginBottom: 9,
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <span style={{
           fontFamily: "'Cinzel', Georgia, serif", fontSize: '0.63rem',
           letterSpacing: '0.1em', color: done ? '#64d278' : '#feeaa5', textTransform: 'uppercase',
         }}>
           {node.name}
         </span>
-        {done && (
-          <span style={{ fontFamily: "'Cinzel'", fontSize: '0.52rem', letterSpacing: '0.06em', color: '#64d278' }}>
-            ✓ FATTO
-          </span>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {total > 0 && (
+            <span style={{
+              fontFamily: "'Cinzel', Georgia, serif", fontSize: '0.52rem',
+              letterSpacing: '0.06em', color: done ? '#64d278' : 'rgba(255,255,255,0.35)',
+            }}>
+              {done ? '✓ FATTO' : `${doneCount}/${total}`}
+            </span>
+          )}
+          <span style={{ color: 'rgba(255,255,255,0.25)', fontSize: '0.85rem' }}>›</span>
+        </div>
       </div>
-      {node.content_html && (
-        <div
-          style={{ fontSize: '0.86rem', color: 'rgba(255,255,255,0.48)', lineHeight: 1.55, marginBottom: 7 }}
-          dangerouslySetInnerHTML={{ __html: node.content_html }}
-        />
-      )}
-      {node.targets.map(target => {
-        const completed = completedTargets.has(target.target_id)
-        return (
-          <div key={target.target_id} style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            gap: 8, padding: '5px 7px', marginTop: 4,
-            background: 'rgba(255,255,255,0.02)', borderRadius: 4,
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-              <span style={{ color: completed ? '#64d278' : 'rgba(255,255,255,0.2)', fontSize: '0.82rem' }}>
-                {completed ? '✓' : '○'}
-              </span>
-              <span style={{
-                fontFamily: "'Cinzel', Georgia, serif", fontSize: '0.6rem',
-                letterSpacing: '0.04em', color: 'rgba(255,255,255,0.42)',
-              }}>
-                {TARGET_LABELS[target.type] ?? target.type}
-              </span>
-            </div>
-            {!completed && target.type === 'gps_location' && (
-              <a href={`/play/${episodeId}/map`} style={ctaStyle('#a5feb8', 'rgba(165,254,184,0.28)')}>Mappa</a>
-            )}
-            {!completed && (target.type === 'code_entry' || target.type === 'qr_scan') && (
-              <a href={`/play/${episodeId}/code?targetId=${target.target_id}&nodeId=${node.node_id}`}
-                style={ctaStyle('#e8af48', 'rgba(232,175,72,0.28)')}>
-                {target.type === 'qr_scan' ? 'Scansiona' : 'Codice'}
-              </a>
-            )}
-            {!completed && target.type === 'claim_item' && (
-              <a href={`/play/${episodeId}/claim?targetId=${target.target_id}&nodeId=${node.node_id}`}
-                style={ctaStyle('#feeaa5', 'rgba(254,234,165,0.28)')}>
-                Raccogli
-              </a>
-            )}
-          </div>
-        )
-      })}
-    </div>
+    </a>
   )
 }
 

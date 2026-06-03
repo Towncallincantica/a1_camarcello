@@ -7,7 +7,7 @@ export default async function MarkersPage() {
 
   const { data: markers, error: markersError } = await supabase
     .from('map_markers')
-    .select('marker_id, name, description, content_html, lat, lng, radius_meters, marker_shape, geometry, marker_type, interaction_type, interaction_data, icon, is_active, visibility_rules, sort_order, episode_id, custom_data')
+    .select('marker_id, name, description, content_html, lat, lng, radius_meters, marker_shape, geometry, marker_type, interaction_type, interaction_data, icon, is_active, visibility_rules, sort_order, episode_id, custom_data, proximity_radius_m, on_enter_actions')
     .eq('adventure_id', ADVENTURE_ID)
     .order('sort_order', { ascending: true })
     .order('name', { ascending: true })

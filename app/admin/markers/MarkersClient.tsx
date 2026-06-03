@@ -4,6 +4,7 @@ import { useState, useTransition, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import AdminMapPicker, { type PickerValue } from './AdminMapPicker'
+import type { OnEnterAction } from '@/lib/proximity/onEnterDispatcher'
 
 type MarkerType = 'location' | 'clue' | 'npc' | 'entrance' | 'secret' | 'danger' | 'meeting_point'
 type InteractionType = 'none' | 'claim_item' | 'narrative' | 'npc_dialog' | 'zone_effect' | 'team_unlock'
@@ -27,6 +28,8 @@ type Marker = {
   sort_order: number
   episode_id: string | null
   custom_data: Record<string, unknown>
+  proximity_radius_m: number | null
+  on_enter_actions: OnEnterAction[]
 }
 
 type Episode = { episode_id: string; name: string }
@@ -59,6 +62,8 @@ type MarkerForm = {
   sort_order: string
   episode_id: string
   picker: PickerValue
+  proximity_radius_m: number | null
+  on_enter_actions: OnEnterAction[]
 }
 
 const EMPTY_FORM: MarkerForm = {
@@ -68,6 +73,7 @@ const EMPTY_FORM: MarkerForm = {
   interaction_data: '{}', icon: '📍',
   is_active: true, visibility_rules: [], sort_order: '0', episode_id: '',
   picker: { shape: 'point', lat: 0, lng: 0, radius_meters: 30, geometry: null },
+  proximity_radius_m: null, on_enter_actions: [],
 }
 
 const MARKER_TYPES: { value: MarkerType; label: string; icon: string }[] = [
@@ -114,6 +120,98 @@ function defaultRule(type: string): VisibilityRule {
     case 'team_has_item':    return { type: 'team_has_item', item_id: '' }
     default:                 return { type: 'always' }
   }
+}
+
+// ── On-enter actions (trigger di prossimità) ──────────────────
+const ON_ENTER_LABELS: Record<OnEnterAction['type'], string> = {
+  reveal_marker: 'Rivela marker',
+  show_narrative: 'Mostra narrativa',
+  apply_effect: 'Applica effetto (item)',
+  complete_target: 'Completa target',
+}
+
+function defaultOnEnterAction(type: OnEnterAction['type']): OnEnterAction {
+  switch (type) {
+    case 'reveal_marker':  return { type, marker_id: '' }
+    case 'show_narrative': return { type, content: '', once: false }
+    case 'apply_effect':   return { type, give_item_id: '' }
+    case 'complete_target':return { type, target_id: '' }
+  }
+}
+
+function OnEnterActionEditor({
+  action, index, markers, items, onChange, onRemove,
+}: {
+  action: OnEnterAction
+  index: number
+  markers: Marker[]
+  items: ItemRef[]
+  onChange: (idx: number, action: OnEnterAction) => void
+  onRemove: (idx: number) => void
+}) {
+  const input: React.CSSProperties = {
+    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '5px', padding: '0.35rem 0.6rem', color: '#e8e4dc',
+    fontFamily: 'inherit', fontSize: '0.82rem', width: '100%', boxSizing: 'border-box',
+  }
+  const update = (patch: Partial<OnEnterAction>) =>
+    onChange(index, { ...action, ...patch } as OnEnterAction)
+
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: '6px', padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem',
+    }}>
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <select
+          value={action.type}
+          onChange={e => onChange(index, defaultOnEnterAction(e.target.value as OnEnterAction['type']))}
+          style={{ ...input, flex: 1 }}
+        >
+          {(Object.keys(ON_ENTER_LABELS) as OnEnterAction['type'][]).map(t =>
+            <option key={t} value={t}>{ON_ENTER_LABELS[t]}</option>
+          )}
+        </select>
+        <button
+          onClick={() => onRemove(index)}
+          style={{ background: 'none', border: 'none', color: 'rgba(255,80,80,0.5)', cursor: 'pointer', fontSize: '1rem', padding: '0 0.25rem' }}
+        >✕</button>
+      </div>
+
+      {action.type === 'reveal_marker' && (
+        <select value={action.marker_id} onChange={e => update({ marker_id: e.target.value })} style={input}>
+          <option value="">— seleziona marker —</option>
+          {markers.map(m => <option key={m.marker_id} value={m.marker_id}>{m.icon} {m.name}</option>)}
+        </select>
+      )}
+
+      {action.type === 'show_narrative' && (
+        <>
+          <input type="text" placeholder="Titolo (opzionale)" value={action.title ?? ''}
+            onChange={e => update({ title: e.target.value })} style={input} />
+          <textarea placeholder="Testo narrativo" value={action.content} rows={3}
+            onChange={e => update({ content: e.target.value })} style={{ ...input, resize: 'vertical' }} />
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)' }}>
+            <input type="checkbox" checked={action.once ?? false}
+              onChange={e => update({ once: e.target.checked })} style={{ accentColor: '#e8af48' }} />
+            Mostra una sola volta (per dispositivo)
+          </label>
+        </>
+      )}
+
+      {action.type === 'apply_effect' && (
+        <select value={action.give_item_id ?? ''} onChange={e => update({ give_item_id: e.target.value })} style={input}>
+          <option value="">— seleziona item da assegnare —</option>
+          {items.map(it => <option key={it.item_id} value={it.item_id}>{it.name}</option>)}
+        </select>
+      )}
+
+      {action.type === 'complete_target' && (
+        <input type="text" placeholder="target_id (sistema target non ancora attivo)"
+          value={action.target_id} onChange={e => update({ target_id: e.target.value })} style={input} />
+      )}
+    </div>
+  )
 }
 
 // ── VisibilityRuleEditor ───────────────────────────────────────
@@ -283,6 +381,8 @@ export default function MarkersClient({
         radius_meters: marker.radius_meters,
         geometry: marker.geometry ?? null,
       },
+      proximity_radius_m: marker.proximity_radius_m ?? null,
+      on_enter_actions: marker.on_enter_actions ?? [],
     })
     setError(null)
     setInteractionError(null)
@@ -306,6 +406,16 @@ export default function MarkersClient({
 
   function removeRule(idx: number) {
     setForm(f => ({ ...f, visibility_rules: f.visibility_rules.filter((_, i) => i !== idx) }))
+  }
+
+  function addOnEnter() {
+    setForm(f => ({ ...f, on_enter_actions: [...f.on_enter_actions, defaultOnEnterAction('show_narrative')] }))
+  }
+  function updateOnEnter(idx: number, action: OnEnterAction) {
+    setForm(f => ({ ...f, on_enter_actions: f.on_enter_actions.map((a, i) => i === idx ? action : a) }))
+  }
+  function removeOnEnter(idx: number) {
+    setForm(f => ({ ...f, on_enter_actions: f.on_enter_actions.filter((_, i) => i !== idx) }))
   }
 
   function parseInteractionData(): Record<string, unknown> | null {
@@ -350,6 +460,8 @@ export default function MarkersClient({
       visibility_rules: form.visibility_rules,
       sort_order: parseInt(form.sort_order) || 0,
       episode_id: form.episode_id || null,
+      proximity_radius_m: form.proximity_radius_m,
+      on_enter_actions: form.on_enter_actions,
     }
   }
 
@@ -676,6 +788,51 @@ export default function MarkersClient({
                 </button>
               ))}
             </div>
+
+            {/* ── Trigger di prossimità ── */}
+            <p style={s.sectionTitle}>Trigger di prossimità</p>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.83rem', color: '#e8e4dc', marginBottom: '0.75rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={form.proximity_radius_m != null}
+                onChange={e => setForm(f => ({ ...f, proximity_radius_m: e.target.checked ? 10 : null }))}
+                style={{ accentColor: '#e8af48' }}
+              />
+              Attiva azioni quando il player entra nel raggio
+            </label>
+
+            {form.proximity_radius_m != null && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+                  <span style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.4)' }}>Raggio</span>
+                  <input
+                    type="number" min={1} value={form.proximity_radius_m}
+                    onChange={e => setForm(f => ({ ...f, proximity_radius_m: parseInt(e.target.value) || 1 }))}
+                    style={{ ...s.input, width: '90px' }}
+                  />
+                  <span style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.4)' }}>metri</span>
+                </div>
+
+                <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.25)', marginBottom: '0.75rem' }}>
+                  Azioni eseguite all&apos;ingresso nel raggio (in ordine).
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  {form.on_enter_actions.map((action, idx) => (
+                    <OnEnterActionEditor
+                      key={idx} action={action} index={idx}
+                      markers={markers} items={items}
+                      onChange={updateOnEnter} onRemove={removeOnEnter}
+                    />
+                  ))}
+                </div>
+
+                <button onClick={addOnEnter} style={{ ...s.btn('ghost'), fontSize: '0.75rem', padding: '0.3rem 0.65rem' }}>
+                  + Aggiungi azione
+                </button>
+              </>
+            )}
 
             {error && (
               <div style={{ margin: '1rem 0', padding: '0.6rem 0.9rem', background: 'rgba(255,80,80,0.08)', border: '1px solid rgba(255,80,80,0.2)', borderRadius: '6px', color: '#ff8080', fontSize: '0.85rem' }}>

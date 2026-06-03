@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createServiceRoleClient } from '@/lib/supabase/service'
 import { requirePlayer } from '@/lib/auth/requirePlayer'
 import { ADVENTURE_ID } from '@/lib/constants'
+import { isNodeVisible, type Condition } from '@/lib/nodeVisibility'
 import EpisodeGameplay from './EpisodeGameplay'
 
 export default async function EpisodePage({
@@ -39,7 +40,13 @@ export default async function EpisodePage({
   if (!episode) redirect('/play')
   if (!player) redirect('/play')
 
-  const [{ data: stats }, { data: nodes }, { data: progress }, { data: inventory }] = await Promise.all([
+  const [
+    { data: stats },
+    { data: nodes },
+    { data: progress },
+    { data: inventory },
+    { data: steps },
+  ] = await Promise.all([
     supabase
       .from('player_episode_stats')
       .select('player_id, team_id')
@@ -60,13 +67,18 @@ export default async function EpisodePage({
       .select('target_id, completed')
       .eq('player_id', player.player_id)
       .eq('episode_id', episodeId),
-    // Inventario: stessa query che funziona in InventoryPage
     supabase
       .from('player_episode_inventory')
       .select('quantity, items ( item_id, name, description, rarity, category, icon_url, is_consumable, base_value )')
       .eq('player_id', player.player_id)
       .eq('episode_id', episodeId)
       .gt('quantity', 0),
+    // Progress item posseduti dal player in questo episodio
+    supabase
+      .from('player_steps')
+      .select('progress_item_id')
+      .eq('player_id', player.player_id)
+      .eq('episode_id', episodeId),
   ])
 
   // Team info + messaggi iniziali
@@ -122,7 +134,11 @@ export default async function EpisodePage({
     (progress ?? []).filter(p => p.completed).map(p => p.target_id)
   )
 
-  // Inventario: usa icon_url come da schema reale
+  const ownedProgress = new Set(
+    (steps ?? []).map(s => s.progress_item_id as string)
+  )
+
+  // Inventario
   const inventoryItems = (inventory ?? []).map(row => {
     const item = (Array.isArray(row.items) ? row.items[0] : row.items) as {
       item_id: string
@@ -148,11 +164,19 @@ export default async function EpisodePage({
     }
   }).filter((x): x is NonNullable<typeof x> => x !== null)
 
+  // Filtro visibilità nodi: solo quelli con condizioni soddisfatte
+  const visibleNodes = (nodes ?? []).filter(n =>
+    isNodeVisible(
+      (n.conditions ?? []) as Condition[],
+      ownedProgress,
+      completedTargets
+    )
+  )
+
   async function joinEpisode() {
     'use server'
     const { player: me } = await requirePlayer()
     const service = createServiceRoleClient()
-    // 23505 (già iscritto) ignorato: idempotente
     const { error } = await service.from('player_episode_stats').insert({
       player_id: me.player_id,
       episode_id: episodeId,
@@ -182,7 +206,7 @@ export default async function EpisodePage({
       teamName={teamName}
       initialMessages={initialMessages}
       initialAnnouncements={announcements ?? []}
-      nodes={(nodes ?? []).map(n => ({
+      nodes={visibleNodes.map(n => ({
         node_id: n.node_id,
         name: n.name,
         node_category: n.node_category,

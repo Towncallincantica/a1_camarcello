@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useMemo } from 'react'
+import { useEffect, useRef, useMemo, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 interface PlayerLocation {
@@ -8,6 +8,7 @@ interface PlayerLocation {
   display_name: string
   lat: number
   lng: number
+  team_id?: string | null
 }
 
 export interface MapMarker {
@@ -21,6 +22,9 @@ export interface MapMarker {
   marker_type: string
   interaction_type: string
   icon: string
+  item_id?: string
+  progress_item_id?: string
+  feedback?: string
 }
 
 interface Props {
@@ -28,9 +32,29 @@ interface Props {
   currentUserId: string
   episodeId: string
   mapMarkers?: MapMarker[]
+  onClaimItem?: (itemId: string) => void
+  onTalk?: (progressItemId: string, feedback?: string) => void
 }
 
-export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers = [] }: Props) {
+// Etichette + colore per tipo di marker (coerenti con poiMarkerHtml)
+const MARKER_TYPE_META: Record<string, { label: string; color: string }> = {
+  location:      { label: 'Luoghi',           color: 'rgba(254,234,165,0.8)' },
+  clue:          { label: 'Indizi',           color: 'rgba(91,155,213,0.8)' },
+  npc:           { label: 'Personaggi',       color: 'rgba(181,123,238,0.8)' },
+  entrance:      { label: 'Ingressi',         color: 'rgba(100,210,120,0.8)' },
+  secret:        { label: 'Segreti',          color: 'rgba(254,234,165,0.5)' },
+  danger:        { label: 'Pericoli',         color: 'rgba(255,100,80,0.8)' },
+  meeting_point: { label: "Punti d'incontro", color: 'rgba(232,175,72,0.8)' },
+}
+
+function typeLabel(t: string): string {
+  return MARKER_TYPE_META[t]?.label ?? t
+}
+function typeColor(t: string): string {
+  return MARKER_TYPE_META[t]?.color ?? 'rgba(255,255,255,0.6)'
+}
+
+export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers = [], onClaimItem, onTalk }: Props) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<unknown>(null)
   const playerMarkersRef = useRef<Map<string, unknown>>(new Map())
@@ -38,6 +62,94 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
   const hasInitialCentered = useRef(false)
   const supabase = useMemo(() => createClient(), [])
 
+  // ── Stato filtri ──────────────────────────────────────────────
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [showTeam, setShowTeam] = useState(true)
+  const [showOthers, setShowOthers] = useState(true)
+  const [showPoi, setShowPoi] = useState(true)
+  const [enabledTypes, setEnabledTypes] = useState<Set<string>>(new Set())
+  const knownTypesRef = useRef<Set<string>>(new Set())
+
+  // Team del giocatore corrente (per separare "squadra" da "altri")
+  const myTeamId = useMemo(
+    () => initialLocations.find((l) => l.user_id === currentUserId)?.team_id ?? null,
+    [initialLocations, currentUserId]
+  )
+
+  // Tipi di marker presenti, ordinati per etichetta
+  const availableTypes = useMemo(() => {
+    const set = new Set(mapMarkers.map((m) => m.marker_type))
+    return Array.from(set).sort((a, b) => typeLabel(a).localeCompare(typeLabel(b)))
+  }, [mapMarkers])
+
+  // Nuovi tipi → abilitati di default; toggle utente preservati
+  useEffect(() => {
+    let changed = false
+    setEnabledTypes((prev) => {
+      const next = new Set(prev)
+      for (const t of availableTypes) {
+        if (!knownTypesRef.current.has(t)) {
+          next.add(t)
+          knownTypesRef.current.add(t)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [availableTypes])
+
+  // ── Applica visibilità a tutti i marker secondo i filtri ──────
+  const applyVisibility = useCallback(() => {
+    const map = mapInstanceRef.current as {
+      addLayer: (l: unknown) => void
+      removeLayer: (l: unknown) => void
+      hasLayer: (l: unknown) => boolean
+    } | null
+    if (!map) return
+
+    const setVisible = (marker: unknown, visible: boolean) => {
+      if (visible) {
+        if (!map.hasLayer(marker)) map.addLayer(marker)
+      } else {
+        if (map.hasLayer(marker)) map.removeLayer(marker)
+      }
+    }
+
+    // Giocatori: io sempre visibile; squadra vs altri secondo i toggle
+    const teamByUser = new Map(initialLocations.map((l) => [l.user_id, l.team_id ?? null]))
+    for (const [userId, marker] of playerMarkersRef.current.entries()) {
+      let visible: boolean
+      if (userId === currentUserId) {
+        visible = true
+      } else {
+        const teamId = teamByUser.get(userId) ?? null
+        const sameTeam = !!myTeamId && teamId === myTeamId
+        visible = sameTeam ? showTeam : showOthers
+      }
+      setVisible(marker, visible)
+    }
+
+    // POI: master toggle + sotto-filtro per tipo
+    const typeById = new Map(mapMarkers.map((m) => [m.marker_id, m.marker_type]))
+    for (const [id, marker] of poiMarkersRef.current.entries()) {
+      const t = typeById.get(id)
+      const visible = showPoi && (t ? enabledTypes.has(t) : true)
+      setVisible(marker, visible)
+    }
+  }, [initialLocations, currentUserId, myTeamId, showTeam, showOthers, showPoi, enabledTypes, mapMarkers])
+
+  // Ref sempre aggiornata, così callback async (realtime) usa i filtri correnti
+  const applyVisibilityRef = useRef(applyVisibility)
+  useEffect(() => {
+    applyVisibilityRef.current = applyVisibility
+  }, [applyVisibility])
+
+  // Riapplica quando cambiano i filtri (o gli input)
+  useEffect(() => {
+    applyVisibility()
+  }, [applyVisibility])
+
+  // ── Init mappa ────────────────────────────────────────────────
   useEffect(() => {
     if (!mapRef.current) return
     if (mapInstanceRef.current) return
@@ -61,9 +173,9 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
       map = L.map(mapRef.current, { center, zoom: 17, zoomControl: false, attributionControl: false })
       mapInstanceRef.current = map
 
-      L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+      L.tileLayer('https://tile.openstreetmap.bzh/ca/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap',
         maxZoom: 19,
-        attribution: '&copy; incantica',
       }).addTo(map)
 
       // Player markers
@@ -82,8 +194,11 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
 
       // POI markers
       for (const poi of mapMarkers) {
-        addPoiMarker(L, map, poi)
+        addPoiMarker(L, map, poi, onClaimItem, onTalk)
       }
+
+      // Applica i filtri iniziali
+      applyVisibilityRef.current()
 
       // Realtime player locations
       const channel = supabase
@@ -114,6 +229,8 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
                 zIndexOffset: 1000,
               }).addTo(map!)
               playerMarkersRef.current.set(raw.user_id, marker)
+              // Nuovo giocatore: rispetta subito i filtri correnti
+              applyVisibilityRef.current()
             }
           }
         )
@@ -186,6 +303,8 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
           playerMarkersRef.current.set(loc.user_id, marker)
         }
       }
+      // Riapplica filtri (nuovi giocatori / team aggiornati)
+      applyVisibilityRef.current()
     })
   }, [initialLocations, currentUserId])
 
@@ -210,11 +329,39 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
         if (existing) {
           existing.setLatLng([poi.lat, poi.lng])
         } else {
-          addPoiMarker(L, map as ReturnType<typeof L.map>, poi)
+          addPoiMarker(L, map as ReturnType<typeof L.map>, poi, onClaimItem, onTalk)
         }
       }
+      // Riapplica filtri ai POI
+      applyVisibilityRef.current()
     })
-  }, [mapMarkers])
+  }, [mapMarkers]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Stili UI filtri ───────────────────────────────────────────
+  const fabStyle: React.CSSProperties = {
+    width: '40px',
+    height: '40px',
+    borderRadius: '50%',
+    background: 'rgba(9,8,7,0.88)',
+    border: '1px solid rgba(254,234,165,0.3)',
+    color: '#feeaa5',
+    fontSize: '1.1rem',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 2px 12px rgba(0,0,0,0.5)',
+  }
+
+  const rowStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '5px 0',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+    color: '#e8e4dc',
+  }
 
   return (
     <>
@@ -242,32 +389,118 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
           top: 8px !important;
           right: 10px !important;
         }
+        .map-filter-check {
+          accent-color: #e8af48;
+          width: 15px;
+          height: 15px;
+          cursor: pointer;
+          flex-shrink: 0;
+        }
       `}</style>
       <div style={{ position: 'relative', width: '100%', height: '100%' }}>
         <div
           ref={mapRef}
           style={{ width: '100%', height: '100%', minHeight: '400px', background: '#1a1a18' }}
         />
+
+        {/* Pannello filtri */}
+        {panelOpen && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: '7rem',
+              right: '1rem',
+              zIndex: 1001,
+              width: '210px',
+              maxHeight: '60%',
+              overflowY: 'auto',
+              background: 'rgba(9,8,7,0.95)',
+              border: '1px solid rgba(254,234,165,0.2)',
+              borderRadius: '10px',
+              boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
+              padding: '0.85rem 1rem',
+              fontFamily: "'EB Garamond', Georgia, serif",
+            }}
+          >
+            <div style={{
+              fontFamily: "'Cinzel', serif",
+              fontSize: '0.7rem',
+              letterSpacing: '0.1em',
+              color: 'rgba(254,234,165,0.7)',
+              textTransform: 'uppercase',
+              marginBottom: '0.4rem',
+            }}>
+              Giocatori
+            </div>
+            <label style={rowStyle}>
+              <input type="checkbox" className="map-filter-check"
+                checked={showTeam} onChange={(e) => setShowTeam(e.target.checked)} />
+              La mia squadra
+            </label>
+            <label style={rowStyle}>
+              <input type="checkbox" className="map-filter-check"
+                checked={showOthers} onChange={(e) => setShowOthers(e.target.checked)} />
+              Altri giocatori
+            </label>
+            <div style={{
+              fontSize: '0.7rem',
+              color: 'rgba(255,255,255,0.3)',
+              fontStyle: 'italic',
+              margin: '0.2rem 0 0.6rem',
+            }}>
+              Tu sei sempre visibile.
+            </div>
+
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', margin: '0.3rem 0 0.6rem' }} />
+
+            <label style={{ ...rowStyle, fontFamily: "'Cinzel', serif", fontSize: '0.7rem', letterSpacing: '0.1em', color: 'rgba(254,234,165,0.7)', textTransform: 'uppercase' }}>
+              <input type="checkbox" className="map-filter-check"
+                checked={showPoi} onChange={(e) => setShowPoi(e.target.checked)} />
+              Punti sulla mappa
+            </label>
+
+            {showPoi && availableTypes.length > 0 && (
+              <div style={{ paddingLeft: '0.4rem', marginTop: '0.2rem' }}>
+                {availableTypes.map((t) => (
+                  <label key={t} style={rowStyle}>
+                    <input type="checkbox" className="map-filter-check"
+                      checked={enabledTypes.has(t)}
+                      onChange={(e) => {
+                        setEnabledTypes((prev) => {
+                          const next = new Set(prev)
+                          if (e.target.checked) next.add(t)
+                          else next.delete(t)
+                          return next
+                        })
+                      }} />
+                    <span style={{
+                      width: '9px', height: '9px', borderRadius: '50%',
+                      background: typeColor(t), flexShrink: 0,
+                      boxShadow: `0 0 5px ${typeColor(t)}`,
+                    }} />
+                    {typeLabel(t)}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Pulsante filtri */}
+        <button
+          onClick={() => setPanelOpen((o) => !o)}
+          style={{ ...fabStyle, position: 'absolute', bottom: '4rem', right: '1rem', zIndex: 1000,
+            background: panelOpen ? 'rgba(254,234,165,0.18)' : 'rgba(9,8,7,0.88)' }}
+          title="Filtri"
+          aria-label="Filtri mappa"
+        >
+          ⚑
+        </button>
+
+        {/* Pulsante centrami */}
         <button
           onClick={centerOnSelf}
-          style={{
-            position: 'absolute',
-            bottom: '1rem',
-            right: '1rem',
-            zIndex: 1000,
-            width: '40px',
-            height: '40px',
-            borderRadius: '50%',
-            background: 'rgba(9,8,7,0.88)',
-            border: '1px solid rgba(254,234,165,0.3)',
-            color: '#feeaa5',
-            fontSize: '1.1rem',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 2px 12px rgba(0,0,0,0.5)',
-          }}
+          style={{ ...fabStyle, position: 'absolute', bottom: '1rem', right: '1rem', zIndex: 1000 }}
           title="Centrami"
         >
           ◎
@@ -294,7 +527,9 @@ function escapeHtml(input: string): string {
 function addPoiMarker(
   L: typeof import('leaflet'),
   map: ReturnType<typeof L.map>,
-  poi: MapMarker
+  poi: MapMarker,
+  onClaimItem?: (itemId: string) => void,
+  onTalk?: (progressItemId: string, feedback?: string) => void
 ) {
   const marker = L.marker([poi.lat, poi.lng], {
     icon: L.divIcon({
@@ -311,6 +546,36 @@ function addPoiMarker(
     className: 'poi-popup',
     maxWidth: 280,
     minWidth: 220,
+  })
+
+  // Event delegation: intercetta i click sui bottoni interattivi nel popup
+  marker.on('popupopen', () => {
+    const root = marker.getPopup()?.getElement()
+    if (!root) return
+
+    // claim_item
+    const claimBtn = root.querySelector<HTMLButtonElement>('[data-claim-item-id]')
+    if (claimBtn) {
+      claimBtn.addEventListener('click', () => {
+        const itemId = claimBtn.getAttribute('data-claim-item-id')
+        if (itemId && onClaimItem) {
+          marker.closePopup()
+          onClaimItem(itemId)
+        }
+      })
+    }
+
+    // narrative / npc_dialog → "Parla"
+    const talkBtn = root.querySelector<HTMLButtonElement>('[data-talk-progress-id]')
+    if (talkBtn) {
+      talkBtn.addEventListener('click', () => {
+        const progressItemId = talkBtn.getAttribute('data-talk-progress-id')
+        if (progressItemId && onTalk) {
+          marker.closePopup()
+          onTalk(progressItemId, poi.feedback)
+        }
+      })
+    }
   })
 
   marker.addTo(map)
@@ -370,6 +635,36 @@ function buildPopupHtml(poi: MapMarker): string {
   const hasInteraction = poi.interaction_type !== 'none'
   const interLabel = interactionLabel[poi.interaction_type] ?? ''
 
+  // Bottone "Parla" per narrative/npc_dialog con progress item associato
+  const isTalk =
+    (poi.interaction_type === 'narrative' || poi.interaction_type === 'npc_dialog') &&
+    !!poi.progress_item_id
+
+  const talkLabel = poi.interaction_type === 'narrative' ? '📖 Leggi' : '💬 Parla'
+
+  const actionButtonStyle = `
+    width: 100%;
+    background: rgba(254,234,165,0.08);
+    border: 1px solid rgba(254,234,165,0.3);
+    border-radius: 6px;
+    color: #feeaa5;
+    font-family: 'Cinzel', serif;
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    text-align: center;
+  `
+
+  let interactionBlock = ''
+  if (poi.interaction_type === 'claim_item' && poi.item_id) {
+    interactionBlock = `<button data-claim-item-id="${escapeHtml(poi.item_id)}" style="${actionButtonStyle}">🎒 Raccogli oggetto</button>`
+  } else if (isTalk) {
+    interactionBlock = `<button data-talk-progress-id="${escapeHtml(poi.progress_item_id!)}" style="${actionButtonStyle}">${talkLabel}</button>`
+  } else {
+    interactionBlock = `<div style="font-size:0.8rem;color:rgba(254,234,165,0.7);letter-spacing:0.03em;">${interLabel}</div>`
+  }
+
   return `
     <div style="padding: 1rem 1.25rem; min-width: 200px;">
       <div style="
@@ -404,10 +699,9 @@ function buildPopupHtml(poi: MapMarker): string {
           margin-top: 0.75rem;
           padding-top: 0.75rem;
           border-top: 1px solid rgba(255,255,255,0.07);
-          font-size: 0.8rem;
-          color: rgba(254,234,165,0.7);
-          letter-spacing: 0.03em;
-        ">${interLabel}</div>
+        ">
+          ${interactionBlock}
+        </div>
       ` : ''}
     </div>
   `

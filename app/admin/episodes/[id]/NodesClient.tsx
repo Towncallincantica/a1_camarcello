@@ -21,7 +21,6 @@ type ContentNode = {
 type NodeForm = {
   name: string
   node_category: NodeCategory
-  content_html: string
 }
 
 const CATEGORIES: NodeCategory[] = ['main_story', 'side_quest', 'exploration', 'social', 'combat', 'puzzle']
@@ -47,7 +46,6 @@ const CATEGORY_COLORS: Record<NodeCategory, string> = {
 const EMPTY_FORM: NodeForm = {
   name: '',
   node_category: 'main_story',
-  content_html: '',
 }
 
 const s = {
@@ -114,7 +112,7 @@ export default function NodesClient({
 
   function openEdit(node: ContentNode) {
     setEditingNode(node)
-    setForm({ name: node.name, node_category: node.node_category, content_html: node.content_html })
+    setForm({ name: node.name, node_category: node.node_category })
     setError(null)
     setModalOpen(true)
   }
@@ -136,7 +134,6 @@ export default function NodesClient({
           .update({
             name: form.name.trim(),
             node_category: form.node_category,
-            content_html: form.content_html,
             updated_at: new Date().toISOString(),
           })
           .eq('node_id', editingNode.node_id)
@@ -151,7 +148,7 @@ export default function NodesClient({
             episode_id: id,
             name: form.name.trim(),
             node_category: form.node_category,
-            content_html: form.content_html,
+            content_html: '',
           })
           .select()
           .single()
@@ -247,7 +244,7 @@ export default function NodesClient({
                 </td>
                 <td style={{ padding: '0.65rem 0.75rem' }}>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <Link href={`/admin/episodes/${node.episode_id}/editor/${node.node_id}`} style={{ ...s.btn('ghost'), display: 'inline-block', textDecoration: 'none' }}>Editor →</Link>
+                    <Link href={`/admin/episodes/${node.episode_id}/nodes/${node.node_id}`} style={{ ...s.btn('ghost'), display: 'inline-block', textDecoration: 'none' }}>Editor →</Link>
                     <button style={s.btn('ghost')} onClick={() => openEdit(node)}>Modifica</button>
                     {deleteConfirm === node.node_id ? (
                       <>
@@ -304,23 +301,6 @@ export default function NodesClient({
                   </option>
                 ))}
               </select>
-            </div>
-
-            <div style={{ marginBottom: '1.25rem' }}>
-              <label style={s.label}>Contenuto HTML</label>
-              <textarea
-                value={form.content_html}
-                onChange={e => setForm(f => ({ ...f, content_html: e.target.value }))}
-                rows={8}
-                style={{ ...s.input, resize: 'vertical', lineHeight: 1.5 }}
-                placeholder="<p>Testo narrativo del nodo...</p>"
-              />
-              {form.content_html && (
-                <div style={{ marginTop: '0.5rem', padding: '0.75rem', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '6px', fontSize: '0.85rem', color: 'rgba(255,255,255,0.5)' }}>
-                  <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.25)', marginBottom: '0.4rem', letterSpacing: '0.06em' }}>ANTEPRIMA</div>
-                  <div dangerouslySetInnerHTML={{ __html: form.content_html }} />
-                </div>
-              )}
             </div>
 
             {error && (

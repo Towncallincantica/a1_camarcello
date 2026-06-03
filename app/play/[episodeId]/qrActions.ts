@@ -3,6 +3,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { createServiceRoleClient } from '@/lib/supabase/service'
 import { ADVENTURE_ID } from '@/lib/constants'
+import type { OnEnterAction } from '@/lib/proximity/onEnterDispatcher'
 
 export type ClaimResult =
   | {
@@ -164,4 +165,70 @@ export async function claimItemByQR(
       rarity: item.rarity,
     },
   }
+}
+// ────────────────────────────────────────────────────────────────
+// applyMarkerOnEnter — braccio persistente del sistema di prossimità.
+//
+// Il client dice solo "sono entrato nel marker X" (markerId). Il server
+// RILEGGE on_enter_actions dal DB — non si fida del payload del client —
+// ed esegue gli effetti dichiarati lì. Fonte di verità = il DB, mai il browser.
+//
+// Per ora gestisce solo give_item_id (riusa claimItemByQR → stesse regole di
+// unicità/stacking). XP e status sono no-op intenzionali (vedi nota).
+// ────────────────────────────────────────────────────────────────
+
+export type ApplyOnEnterResult =
+  | { success: true; claimed: ClaimResult[] }
+  | { success: false; error: string }
+
+export async function applyMarkerOnEnter(
+  episodeId: string,
+  markerId: string
+): Promise<ApplyOnEnterResult> {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { success: false, error: 'Non autenticato.' }
+
+  const service = createServiceRoleClient()
+
+  // Rileggi il marker dal DB: scope + azioni autorevoli.
+  const { data: marker } = await service
+    .from('map_markers')
+    .select('marker_id, adventure_id, episode_id, on_enter_actions, is_active')
+    .eq('marker_id', markerId)
+    .single()
+
+  if (!marker || !marker.is_active)
+    return { success: false, error: 'Marker non trovato.' }
+
+  // Verifica che il marker appartenga a questa avventura/episodio.
+  if (marker.adventure_id && marker.adventure_id !== ADVENTURE_ID)
+    return { success: false, error: 'Marker non disponibile in questa avventura.' }
+  if (marker.episode_id && marker.episode_id !== episodeId)
+    return { success: false, error: 'Marker non disponibile in questo episodio.' }
+
+  const actions = (marker.on_enter_actions ?? []) as OnEnterAction[]
+
+  // Esegui solo le azioni persistenti (apply_effect). reveal_marker e
+  // show_narrative sono cosmetici e restano lato client.
+  const claimed: ClaimResult[] = []
+
+  for (const action of actions) {
+    if (action.type !== 'apply_effect') continue
+
+    if (action.give_item_id) {
+      // Riusa la logica autorevole: stesse regole di unicità/stacking.
+      const res = await claimItemByQR(episodeId, action.give_item_id)
+      claimed.push(res)
+    }
+
+    // NOTA: XP e status non sono gestiti di proposito.
+    // Senza tabella guardia (player_marker_triggers) sarebbero ri-applicabili
+    // a ogni rientro nel raggio. Quando servirà, aggiungere qui la logica
+    // con il controllo once-per-player.
+  }
+
+  return { success: true, claimed }
 }

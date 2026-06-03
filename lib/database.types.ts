@@ -722,6 +722,8 @@ export type Database = {
           marker_shape: string
           marker_type: Database["public"]["Enums"]["marker_type"]
           name: string
+          on_enter_actions: Json
+          proximity_radius_m: number | null
           radius_meters: number
           sort_order: number
           updated_at: string
@@ -745,6 +747,8 @@ export type Database = {
           marker_shape?: string
           marker_type?: Database["public"]["Enums"]["marker_type"]
           name: string
+          on_enter_actions?: Json
+          proximity_radius_m?: number | null
           radius_meters?: number
           sort_order?: number
           updated_at?: string
@@ -768,6 +772,8 @@ export type Database = {
           marker_shape?: string
           marker_type?: Database["public"]["Enums"]["marker_type"]
           name?: string
+          on_enter_actions?: Json
+          proximity_radius_m?: number | null
           radius_meters?: number
           sort_order?: number
           updated_at?: string
@@ -1817,6 +1823,7 @@ export type Database = {
           display_name: string
           lat: number
           lng: number
+          team_id: string
           user_id: string
         }[]
       }
@@ -1831,6 +1838,7 @@ export type Database = {
       }
       get_teammate_player_ids: { Args: never; Returns: string[] }
       gettransactionid: { Args: never; Returns: unknown }
+      is_admin: { Args: { p_adventure_id?: string }; Returns: boolean }
       join_team: {
         Args: { p_episode_id: string; p_team_id: string }
         Returns: string
