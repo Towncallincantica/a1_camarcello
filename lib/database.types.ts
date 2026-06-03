@@ -1836,6 +1836,12 @@ export type Database = {
           user_id: string
         }[]
       }
+      get_team_inventory_item_ids: {
+        Args: { p_team_id: string }
+        Returns: {
+          item_id: string
+        }[]
+      }
       get_teammate_player_ids: { Args: never; Returns: string[] }
       gettransactionid: { Args: never; Returns: unknown }
       is_admin: { Args: { p_adventure_id?: string }; Returns: boolean }

@@ -221,45 +221,35 @@ export default function MapWrapper({
     setEvalCtx(ctx => ({ ...ctx, playerInventoryItemIds: itemIds, activeStatusTypes: activeStatuses }))
   }, [playerId, supabase])
 
-  // Carica i membri della squadra → player_id (inventario) + user_id (posizioni)
-  const loadTeamContext = useCallback(async () => {
-    if (!teamId) {
-      setTeamUserIds([])
-      setEvalCtx(ctx => ({ ...ctx, teamInventoryItemIds: new Set() }))
-      return
-    }
-
-    // Membri: player_id + user_id (join su player). Le join Supabase tornano
-    // array anche per 1:1 → cast con Array.isArray.
-    const { data: members } = await supabase
+  // Membri della squadra → user_id (per filtrare le posizioni di team_nearby).
+  const loadTeamMembers = useCallback(async () => {
+    if (!teamId) { setTeamUserIds([]); return }
+    // Join su player. Le join Supabase tornano array anche per 1:1 → Array.isArray.
+    const { data } = await supabase
       .from('team_members')
-      .select('player_id, player:player_id ( user_id )')
+      .select('player:player_id ( user_id )')
       .eq('team_id', teamId)
 
-    const playerIds: string[] = []
     const userIds: string[] = []
-    for (const m of (members ?? []) as { player_id: string; player: { user_id: string } | { user_id: string }[] | null }[]) {
-      playerIds.push(m.player_id)
+    for (const m of (data ?? []) as { player: { user_id: string } | { user_id: string }[] | null }[]) {
       const p = Array.isArray(m.player) ? m.player[0] : m.player
       if (p?.user_id) userIds.push(p.user_id)
     }
     setTeamUserIds(userIds)
+  }, [teamId, supabase])
 
-    if (playerIds.length === 0) {
+  // Inventario aggregato della squadra → via RPC SECURITY DEFINER (bypassa RLS,
+  // altrimenti ogni giocatore vedrebbe solo il proprio inventario).
+  const loadTeamInventory = useCallback(async () => {
+    if (!teamId) {
       setEvalCtx(ctx => ({ ...ctx, teamInventoryItemIds: new Set() }))
       return
     }
-
-    // Inventario aggregato della squadra
-    const { data: inv } = await supabase
-      .from('player_episode_inventory')
-      .select('item_id')
-      .in('player_id', playerIds)
-
-    const teamItemIds = new Set<string>(
-      (inv ?? []).map((r: { item_id: string }) => r.item_id)
-    )
-    setEvalCtx(ctx => ({ ...ctx, teamInventoryItemIds: teamItemIds }))
+    const { data, error } = await supabase
+      .rpc('get_team_inventory_item_ids', { p_team_id: teamId })
+    if (error) { console.error('[MapWrapper] team inventory RPC error:', error); return }
+    const ids = new Set<string>((data ?? []).map((r: { item_id: string }) => r.item_id))
+    setEvalCtx(ctx => ({ ...ctx, teamInventoryItemIds: ids }))
   }, [teamId, supabase])
 
   // Init
@@ -267,8 +257,22 @@ export default function MapWrapper({
     loadLocations()
     loadMarkers()
     loadPlayerContext()
-    loadTeamContext()
-  }, [loadLocations, loadMarkers, loadPlayerContext, loadTeamContext])
+    loadTeamMembers()
+    loadTeamInventory()
+  }, [loadLocations, loadMarkers, loadPlayerContext, loadTeamMembers, loadTeamInventory])
+
+  // Refresh inventario squadra SOLO se almeno un marker usa team_has_item.
+  // Altrimenti zero chiamate. Quando serve: una RPC ogni 30s (invalidazione
+  // robusta — il Realtime sarebbe bloccato dalla RLS sui dati altrui).
+  const needsTeamInventory = useMemo(
+    () => allRawMarkers.some(m => (m.visibility_rules ?? []).some(r => r.type === 'team_has_item')),
+    [allRawMarkers]
+  )
+  useEffect(() => {
+    if (!teamId || !needsTeamInventory) return
+    const id = setInterval(() => { loadTeamInventory() }, 30_000)
+    return () => clearInterval(id)
+  }, [teamId, needsTeamInventory, loadTeamInventory])
 
   // GPS event → cattura posizione locale (per prossimità) + ricarica locations
   useEffect(() => {
