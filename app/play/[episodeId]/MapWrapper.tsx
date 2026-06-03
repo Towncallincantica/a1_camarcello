@@ -274,14 +274,22 @@ export default function MapWrapper({
     return () => clearInterval(id)
   }, [teamId, needsTeamInventory, loadTeamInventory])
 
-  // GPS event → cattura posizione locale (per prossimità) + ricarica locations
+  // GPS event → cattura posizione locale (per prossimità + selfLocation).
+  // Il Realtime è la fonte primaria delle posizioni: qui NON ricarichiamo a
+  // ogni fix (sarebbe una RPC al secondo per giocatore). Solo un fallback
+  // throttlato a 20s in caso il canale Realtime sia disconnesso.
+  const lastLocFetch = useRef(0)
   useEffect(() => {
     const onGpsOk = (e: Event) => {
       const detail = (e as CustomEvent<{ lat: number; lng: number }>).detail
       if (detail && typeof detail.lat === 'number' && typeof detail.lng === 'number') {
         setPosition({ lat: detail.lat, lng: detail.lng })
       }
-      loadLocations()
+      const now = Date.now()
+      if (now - lastLocFetch.current > 20_000) {
+        lastLocFetch.current = now
+        loadLocations()
+      }
     }
     window.addEventListener('gps:ok', onGpsOk)
     return () => window.removeEventListener('gps:ok', onGpsOk)
@@ -357,16 +365,19 @@ export default function MapWrapper({
 
   // ── Visibilità ─────────────────────────────────────────────────
   const computeVisible = useCallback(() => {
-    const self = locations.find(l => l.user_id === currentUserId)
+    // selfLocation: priorità alla posizione locale (fresca, 0 DB); fallback al DB.
+    const dbSelf = locations.find(l => l.user_id === currentUserId)
+    const selfLocation = position
+      ?? (dbSelf ? { lat: dbSelf.lat, lng: dbSelf.lng } : null)
     const ctx: EvalContext = {
       ...evalCtx,
       allMarkers: allRawMarkers,
-      selfLocation: self ? { lat: self.lat, lng: self.lng } : null,
+      selfLocation,
     }
     return allRawMarkers
       .filter(m => isMarkerVisible(m, ctx) || revealedIds.has(m.marker_id))
       .map(enrichMarker)
-  }, [allRawMarkers, evalCtx, locations, currentUserId, revealedIds])
+  }, [allRawMarkers, evalCtx, locations, currentUserId, revealedIds, position])
 
   // Rivaluta ogni volta che cambia contesto, marker o reveal
   useEffect(() => {
