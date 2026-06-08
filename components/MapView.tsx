@@ -34,6 +34,7 @@ interface Props {
   mapMarkers?: MapMarker[]
   onClaimItem?: (itemId: string) => void
   onTalk?: (progressItemId: string, feedback?: string) => void
+  uiObscured?: boolean
 }
 
 // Etichette + colore per tipo di marker (coerenti con poiMarkerHtml)
@@ -59,7 +60,7 @@ const MIN_ZOOM = 16
 const MAX_ZOOM = 19
 const DEFAULT_ZOOM = 17
 
-export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers = [], onClaimItem, onTalk }: Props) {
+export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers = [], onClaimItem, onTalk, uiObscured = false }: Props) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<unknown>(null)
   const playerMarkersRef = useRef<Map<string, unknown>>(new Map())
@@ -574,7 +575,7 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
               position: 'absolute',
               bottom: '7rem',
               right: '1rem',
-              zIndex: 1001,
+              zIndex: uiObscured ? 9 : 1001,
               width: '210px',
               maxHeight: '60%',
               overflowY: 'auto',
@@ -653,7 +654,7 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
         {/* Pulsante filtri */}
         <button
           onClick={() => setPanelOpen((o) => !o)}
-          style={{ ...fabStyle, position: 'absolute', bottom: '4rem', right: '1rem', zIndex: 1000,
+          style={{ ...fabStyle, position: 'absolute', bottom: '4rem', right: '1rem', zIndex: uiObscured ? 9 : 1000,
             background: panelOpen ? 'rgba(254,234,165,0.18)' : 'rgba(9,8,7,0.88)' }}
           title="Filtri"
           aria-label="Filtri mappa"
@@ -670,7 +671,7 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
               position: 'absolute',
               bottom: '7.5rem',
               right: '1rem',
-              zIndex: 1000,
+              zIndex: uiObscured ? 9 : 1000,
               fontSize: '1.2rem',
             }}
             title="Attiva bussola"

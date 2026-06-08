@@ -18,6 +18,7 @@ interface Props {
   onNarrative?: (n: { title?: string; content: string; key: string; once: boolean }) => void
   onApplyEffect?: (markerId: string) => Promise<void>
   onCompleteTarget?: (targetId: string) => Promise<void>
+  uiObscured?: boolean
 }
 
 interface PlayerLocation {
@@ -150,6 +151,7 @@ export default function MapWrapper({
   onNarrative,
   onApplyEffect,
   onCompleteTarget,
+  uiObscured,
 }: Props) {
   const [locations, setLocations] = useState<PlayerLocation[]>([])
   const [visibleMarkers, setVisibleMarkers] = useState<MapMarker[]>([])
@@ -430,6 +432,7 @@ if (mapBlocked) {
       mapMarkers={visibleMarkers}
       onClaimItem={onClaimItem}
       onTalk={onTalk}
+      uiObscured={uiObscured}
     />
   )
 }

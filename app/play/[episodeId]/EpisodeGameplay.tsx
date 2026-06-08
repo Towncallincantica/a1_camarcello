@@ -525,6 +525,7 @@ export default function EpisodeGameplay({
           onClaimItem={handleMapClaim}
           onTalk={handleTalk}
           onNarrative={handleProximityNarrative}
+          uiObscured={tabOpen}
           onApplyEffect={handleProximityEffect}
           onCompleteTarget={handleProximityCompleteTarget}
         />
