@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation'
 import { ADVENTURE_ID } from '@/lib/constants'
 import { PlayerQRCode } from '@/components/PlayerQRCode'
 import { AvatarUpload } from './AvatarUpload'
+import FontSizeSelector from '@/components/FontSizeSelector'
+
 
 const rarityColors: Record<string, string> = {
   common: 'rgba(255,255,255,0.5)',
@@ -108,7 +110,7 @@ export default async function ProfilePage({
       </div>
 
       <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-
+<FontSizeSelector />
         {/* Avatar + Stats */}
         <section>
           <div style={{
@@ -265,6 +267,8 @@ export default async function ProfilePage({
             <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '0.85rem' }}>Nessun oggetto ancora.</p>
           )}
         </section>
+
+
 
         {/* Achievements */}
         {achievements && achievements.length > 0 && (
