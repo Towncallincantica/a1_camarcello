@@ -54,12 +54,23 @@ function typeColor(t: string): string {
   return MARKER_TYPE_META[t]?.color ?? 'rgba(255,255,255,0.6)'
 }
 
+// ── Costanti ────────────────────────────────────────────────────
+const MIN_ZOOM = 16
+const MAX_ZOOM = 19
+const DEFAULT_ZOOM = 17
+
 export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers = [], onClaimItem, onTalk }: Props) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<unknown>(null)
   const playerMarkersRef = useRef<Map<string, unknown>>(new Map())
   const poiMarkersRef = useRef<Map<string, unknown>>(new Map())
   const hasInitialCentered = useRef(false)
+  // Ref al marker del giocatore corrente per aggiornamenti diretti (heading)
+  const selfMarkerRef = useRef<unknown>(null)
+  // Heading corrente in gradi (0 = nord). Aggiornato da deviceorientation.
+  const headingRef = useRef<number>(0)
+  // Posizione GPS corrente (aggiornata da gps:ok)
+  const selfPositionRef = useRef<{ lat: number; lng: number } | null>(null)
   const supabase = useMemo(() => createClient(), [])
 
   // ── Stato filtri ──────────────────────────────────────────────
@@ -170,12 +181,26 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
       const self = initialLocations.find((l) => l.user_id === currentUserId)
       const center: [number, number] = self ? [self.lat, self.lng] : [45.5, 12.0]
 
-      map = L.map(mapRef.current, { center, zoom: 17, zoomControl: false, attributionControl: false })
+      map = L.map(mapRef.current, {
+        center,
+        zoom: DEFAULT_ZOOM,
+        minZoom: MIN_ZOOM,
+        maxZoom: MAX_ZOOM,
+        zoomControl: false,
+        attributionControl: false,
+        // Mappa non spostabile a mano — il centro è sempre il giocatore
+        dragging: false,
+        doubleClickZoom: false,
+        scrollWheelZoom: true,   // zoom rotella/pinch rimane attivo
+        touchZoom: true,
+        boxZoom: false,
+        keyboard: false,
+      })
       mapInstanceRef.current = map
 
       L.tileLayer('https://tile.openstreetmap.bzh/ca/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap',
-        maxZoom: 19,
+        maxZoom: MAX_ZOOM,
       }).addTo(map)
 
       // Player markers
@@ -184,17 +209,21 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
         const marker = L.marker([loc.lat, loc.lng], {
           icon: L.divIcon({
             className: '',
-            html: playerMarkerHtml(loc.display_name, isSelf),
-            iconAnchor: [16, 16],
+            html: isSelf
+              ? selfMarkerHtml(loc.display_name, headingRef.current)
+              : playerMarkerHtml(loc.display_name, false),
+            iconAnchor: [20, 20],
           }),
           zIndexOffset: 1000,
         }).addTo(map)
         playerMarkersRef.current.set(loc.user_id, marker)
+        if (isSelf) selfMarkerRef.current = marker
       }
 
       // POI markers
       for (const poi of mapMarkers) {
-        addPoiMarker(L, map, poi, onClaimItem, onTalk)
+        const m = addPoiMarker(L, map, poi, onClaimItem, onTalk)
+        poiMarkersRef.current.set(poi.marker_id, m)
       }
 
       // Applica i filtri iniziali
@@ -216,6 +245,10 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
 
             if (existing) {
               existing.setLatLng([raw.lat, raw.lng])
+              // Se sono io, aggiorno anche la posizione ref (per auto-center)
+              if (isSelf) {
+                selfPositionRef.current = { lat: raw.lat, lng: raw.lng }
+              }
             } else {
               const displayName = initialLocations.find(
                 (l) => l.user_id === raw.user_id
@@ -223,13 +256,15 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
               const marker = L.marker([raw.lat, raw.lng], {
                 icon: L.divIcon({
                   className: '',
-                  html: playerMarkerHtml(displayName, isSelf),
-                  iconAnchor: [16, 16],
+                  html: isSelf
+                    ? selfMarkerHtml(displayName, headingRef.current)
+                    : playerMarkerHtml(displayName, false),
+                  iconAnchor: [20, 20],
                 }),
                 zIndexOffset: 1000,
               }).addTo(map!)
               playerMarkersRef.current.set(raw.user_id, marker)
-              // Nuovo giocatore: rispetta subito i filtri correnti
+              if (isSelf) selfMarkerRef.current = marker
               applyVisibilityRef.current()
             }
           }
@@ -254,17 +289,85 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
         mapInstanceRef.current = null
         playerMarkersRef.current.clear()
         poiMarkersRef.current.clear()
+        selfMarkerRef.current = null
       }
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Centra sulla posizione del player corrente (chiamato dal pulsante)
-  const centerOnSelf = () => {
-    const map = mapInstanceRef.current as { setView: (c: [number, number], z: number) => void } | null
-    if (!map) return
-    const self = initialLocations.find(l => l.user_id === currentUserId)
-    if (self) map.setView([self.lat, self.lng], 17)
-  }
+  // ── GPS: auto-center sulla posizione del giocatore ────────────
+  useEffect(() => {
+    const onGpsOk = (e: Event) => {
+      const detail = (e as CustomEvent<{ lat: number; lng: number }>).detail
+      if (!detail || typeof detail.lat !== 'number' || typeof detail.lng !== 'number') return
+
+      selfPositionRef.current = { lat: detail.lat, lng: detail.lng }
+
+      const map = mapInstanceRef.current as {
+        panTo: (c: [number, number], opts?: unknown) => void
+        setView: (c: [number, number], z: number, opts?: unknown) => void
+      } | null
+      if (!map) return
+
+      // Centra silenziosamente sul giocatore a ogni fix GPS
+      map.panTo([detail.lat, detail.lng], { animate: false, noMoveStart: true })
+    }
+
+    window.addEventListener('gps:ok', onGpsOk)
+    return () => window.removeEventListener('gps:ok', onGpsOk)
+  }, [])
+
+  // ── Orientamento: freccia bussola sul marker self ─────────────
+  useEffect(() => {
+    // Funzione per aggiornare il DOM del marker self in modo diretto,
+    // senza re-render React. Massima fluidità, zero overhead.
+    const updateArrow = (heading: number) => {
+      const marker = selfMarkerRef.current as { getElement?: () => HTMLElement | null } | null
+      if (!marker?.getElement) return
+      const el = marker.getElement()
+      if (!el) return
+      const arrow = el.querySelector<HTMLElement>('[data-compass-arrow]')
+      if (arrow) {
+        arrow.style.transform = `rotate(${heading}deg)`
+      }
+    }
+
+    // Handler per iOS (richiede permesso) e Android
+    const handleOrientation = (e: DeviceOrientationEvent) => {
+      let heading = 0
+
+      // webkitCompassHeading: disponibile su iOS Safari e alcuni Android
+      // È relativo al nord magnetico — quello che vogliamo.
+      const webkit = (e as DeviceOrientationEvent & { webkitCompassHeading?: number })
+        .webkitCompassHeading
+      if (webkit != null && !isNaN(webkit)) {
+        heading = webkit
+      } else if (e.alpha != null) {
+        // Android standard: alpha va da 0 a 360 ma in senso anti-orario
+        heading = (360 - e.alpha) % 360
+      }
+
+      headingRef.current = heading
+      updateArrow(heading)
+    }
+
+    // iOS 13+ richiede permesso esplicito
+    const DoE = DeviceOrientationEvent as unknown as {
+      requestPermission?: () => Promise<string>
+    }
+
+    if (typeof DoE.requestPermission === 'function') {
+      // iOS: aspetta il click utente (gestito dal pulsante bussola nella UI)
+      // Qui registriamo solo l'handler — il permesso viene richiesto dal bottone
+      window.addEventListener('deviceorientation', handleOrientation, true)
+    } else {
+      // Android e desktop: nessun permesso necessario
+      window.addEventListener('deviceorientation', handleOrientation, true)
+    }
+
+    return () => {
+      window.removeEventListener('deviceorientation', handleOrientation, true)
+    }
+  }, [])
 
   // Aggiorna player markers quando cambiano le locations (senza auto-center)
   useEffect(() => {
@@ -279,8 +382,9 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
         const self = initialLocations.find(l => l.user_id === currentUserId)
         if (self) {
           ;(map as unknown as { setView: (c: [number, number], z: number) => void })
-            .setView([self.lat, self.lng], 17)
+            .setView([self.lat, self.lng], DEFAULT_ZOOM)
           hasInitialCentered.current = true
+          selfPositionRef.current = { lat: self.lat, lng: self.lng }
         }
       }
 
@@ -295,15 +399,17 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
           const marker = L.marker([loc.lat, loc.lng], {
             icon: L.divIcon({
               className: '',
-              html: playerMarkerHtml(loc.display_name, isSelf),
-              iconAnchor: [16, 16],
+              html: isSelf
+                ? selfMarkerHtml(loc.display_name, headingRef.current)
+                : playerMarkerHtml(loc.display_name, false),
+              iconAnchor: [20, 20],
             }),
             zIndexOffset: 1000,
           }).addTo(map as unknown as ReturnType<typeof L.map>)
           playerMarkersRef.current.set(loc.user_id, marker)
+          if (isSelf) selfMarkerRef.current = marker
         }
       }
-      // Riapplica filtri (nuovi giocatori / team aggiornati)
       applyVisibilityRef.current()
     })
   }, [initialLocations, currentUserId])
@@ -329,13 +435,40 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
         if (existing) {
           existing.setLatLng([poi.lat, poi.lng])
         } else {
-          addPoiMarker(L, map as ReturnType<typeof L.map>, poi, onClaimItem, onTalk)
+          const m = addPoiMarker(L, map as ReturnType<typeof L.map>, poi, onClaimItem, onTalk)
+          poiMarkersRef.current.set(poi.marker_id, m)
         }
       }
-      // Riapplica filtri ai POI
       applyVisibilityRef.current()
     })
   }, [mapMarkers]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Handler permesso bussola iOS ─────────────────────────────
+  const [compassPermission, setCompassPermission] = useState<'unknown' | 'granted' | 'denied'>('unknown')
+
+  const requestCompassPermission = useCallback(async () => {
+    const DoE = DeviceOrientationEvent as unknown as {
+      requestPermission?: () => Promise<string>
+    }
+    if (typeof DoE.requestPermission !== 'function') {
+      // Non iOS — non serve permesso
+      setCompassPermission('granted')
+      return
+    }
+    try {
+      const result = await DoE.requestPermission()
+      setCompassPermission(result === 'granted' ? 'granted' : 'denied')
+    } catch {
+      setCompassPermission('denied')
+    }
+  }, [])
+
+  // Controlla al mount se siamo su iOS (per mostrare il bottone)
+  const [isIos, setIsIos] = useState(false)
+  useEffect(() => {
+    const DoE = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> }
+    setIsIos(typeof DoE.requestPermission === 'function')
+  }, [])
 
   // ── Stili UI filtri ───────────────────────────────────────────
   const fabStyle: React.CSSProperties = {
@@ -395,6 +528,11 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
           height: 15px;
           cursor: pointer;
           flex-shrink: 0;
+        }
+        /* Freccia bussola: transizione fluidissima */
+        [data-compass-arrow] {
+          transition: transform 0.15s ease-out;
+          will-change: transform;
         }
       `}</style>
       <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -497,14 +635,24 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
           ⚑
         </button>
 
-        {/* Pulsante centrami */}
-        <button
-          onClick={centerOnSelf}
-          style={{ ...fabStyle, position: 'absolute', bottom: '1rem', right: '1rem', zIndex: 1000 }}
-          title="Centrami"
-        >
-          ◎
-        </button>
+        {/* Pulsante bussola iOS — visibile solo se richiesto */}
+        {isIos && compassPermission === 'unknown' && (
+          <button
+            onClick={requestCompassPermission}
+            style={{
+              ...fabStyle,
+              position: 'absolute',
+              bottom: '7.5rem',
+              right: '1rem',
+              zIndex: 1000,
+              fontSize: '1.2rem',
+            }}
+            title="Attiva bussola"
+            aria-label="Attiva orientamento bussola"
+          >
+            🧭
+          </button>
+        )}
       </div>
     </>
   )
@@ -512,8 +660,6 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
 
 // ── Helpers ───────────────────────────────────────────────────
 
-// Escape di stringhe non fidate prima dell'interpolazione in HTML grezzo.
-// Critico: display_name è impostato dall'utente → senza escape = stored XSS.
 function escapeHtml(input: string): string {
   return String(input ?? '')
     .replace(/&/g, '&amp;')
@@ -523,6 +669,45 @@ function escapeHtml(input: string): string {
     .replace(/'/g, '&#39;')
 }
 
+// Marker del giocatore corrente con freccia bussola
+function selfMarkerHtml(label: string, heading: number): string {
+  return `
+    <div style="display:flex;flex-direction:column;align-items:center;gap:3px;pointer-events:none;">
+      <div style="position:relative;width:40px;height:40px;display:flex;align-items:center;justify-content:center;">
+        <!-- Freccia orientamento — ruotata via JS su data-compass-arrow -->
+        <div
+          data-compass-arrow
+          style="
+            position:absolute;
+            top:0;left:50%;
+            transform-origin:bottom center;
+            transform:translateX(-50%) rotate(${heading}deg);
+            width:0;height:0;
+            border-left:5px solid transparent;
+            border-right:5px solid transparent;
+            border-bottom:14px solid #feeaa5;
+            opacity:0.9;
+            filter:drop-shadow(0 0 4px rgba(254,234,165,0.7));
+          "
+        ></div>
+        <!-- Cerchio centrale -->
+        <div style="
+          width:28px;height:28px;border-radius:50%;
+          background:rgba(254,234,165,0.15);border:2px solid #feeaa5;
+          display:flex;align-items:center;justify-content:center;
+          font-size:13px;color:#feeaa5;
+          box-shadow:0 0 10px rgba(254,234,165,0.5);
+          z-index:1;
+        ">◈</div>
+      </div>
+      <div style="
+        background:rgba(9,8,7,0.85);border:1px solid #feeaa5;
+        padding:1px 6px;border-radius:999px;
+        font-size:10px;color:#feeaa5;white-space:nowrap;letter-spacing:0.04em;
+      ">${escapeHtml(label)}</div>
+    </div>
+  `
+}
 
 function addPoiMarker(
   L: typeof import('leaflet'),
@@ -540,7 +725,6 @@ function addPoiMarker(
     zIndexOffset: 500,
   })
 
-  // Popup al click
   const popupContent = buildPopupHtml(poi)
   marker.bindPopup(popupContent, {
     className: 'poi-popup',
@@ -548,12 +732,10 @@ function addPoiMarker(
     minWidth: 220,
   })
 
-  // Event delegation: intercetta i click sui bottoni interattivi nel popup
   marker.on('popupopen', () => {
     const root = marker.getPopup()?.getElement()
     if (!root) return
 
-    // claim_item
     const claimBtn = root.querySelector<HTMLButtonElement>('[data-claim-item-id]')
     if (claimBtn) {
       claimBtn.addEventListener('click', () => {
@@ -565,7 +747,6 @@ function addPoiMarker(
       })
     }
 
-    // narrative / npc_dialog → "Parla"
     const talkBtn = root.querySelector<HTMLButtonElement>('[data-talk-progress-id]')
     if (talkBtn) {
       talkBtn.addEventListener('click', () => {
@@ -579,11 +760,6 @@ function addPoiMarker(
   })
 
   marker.addTo(map)
-
-  // Ref per aggiornamenti futuri
-  const poiMarkersRefInternal = (map as unknown as { _poiMarkersRef?: Map<string, unknown> })._poiMarkersRef
-  if (poiMarkersRefInternal) poiMarkersRefInternal.set(poi.marker_id, marker)
-
   return marker
 }
 
@@ -635,7 +811,6 @@ function buildPopupHtml(poi: MapMarker): string {
   const hasInteraction = poi.interaction_type !== 'none'
   const interLabel = interactionLabel[poi.interaction_type] ?? ''
 
-  // Bottone "Parla" per narrative/npc_dialog con progress item associato
   const isTalk =
     (poi.interaction_type === 'narrative' || poi.interaction_type === 'npc_dialog') &&
     !!poi.progress_item_id
