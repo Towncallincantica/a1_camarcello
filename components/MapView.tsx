@@ -198,6 +198,20 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
       })
       mapInstanceRef.current = map
 
+      // Forza il centro zoom sempre sulla posizione del giocatore.
+      // zoomstart scatta prima che Leaflet calcoli il nuovo viewport —
+      // setView qui sovrascrive il centro prima del render.
+      map.on('zoomstart', () => {
+        const pos = selfPositionRef.current
+        if (!pos) return
+        const currentZoom = (map as ReturnType<typeof L.map>).getZoom()
+        ;(map as ReturnType<typeof L.map>).setView(
+          [pos.lat, pos.lng],
+          currentZoom,
+          { animate: false }
+        )
+      })
+
       L.tileLayer('https://tile.openstreetmap.bzh/ca/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap',
         maxZoom: MAX_ZOOM,
@@ -293,6 +307,18 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
       }
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Blocca pull-to-refresh sul contenitore mappa ─────────────
+  // Con dragging:false i touch events non vengono consumati da Leaflet
+  // e risalgono al browser che li interpreta come pull-to-refresh.
+  // { passive: false } è necessario per poter chiamare preventDefault().
+  useEffect(() => {
+    const el = mapRef.current
+    if (!el) return
+    const onTouchMove = (e: TouchEvent) => { e.preventDefault() }
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    return () => el.removeEventListener('touchmove', onTouchMove)
+  }, [])
 
   // ── GPS: auto-center sulla posizione del giocatore ────────────
   useEffect(() => {
