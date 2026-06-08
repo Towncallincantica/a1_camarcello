@@ -635,7 +635,7 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
           ⚑
         </button>
 
-        {/* Pulsante bussola iOS — visibile solo se richiesto */}
+        {/* Pulsante bussola — visibile solo se richiesto */}
         {isIos && compassPermission === 'unknown' && (
           <button
             onClick={requestCompassPermission}
