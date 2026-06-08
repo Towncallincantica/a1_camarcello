@@ -319,8 +319,13 @@ export default function EpisodeGameplay({
             if (exchangeStarting.current) return   // già in corso → ignora i frame successivi
             exchangeStarting.current = true
             try {
-              const sessionId = await initiateExchange(episodeId, parsed.player_id)
-              router.push(`/play/${episodeId}/exchange/${sessionId}`)
+            const result = await initiateExchange(episodeId, parsed.player_id)
+            if (!result.ok) {
+              console.error(result.error)
+              exchangeStarting.current = false
+              return
+            }
+            router.push(`/play/${episodeId}/exchange/${result.sessionId}`)
             } catch (err) {
               console.error(err)
               exchangeStarting.current = false     // riabilita solo in caso di errore
