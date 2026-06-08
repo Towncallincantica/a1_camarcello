@@ -635,7 +635,7 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
           ⚑
         </button>
 
-        {/* Pulsante bussola — visibile solo se richiesto */}
+        {/* Pulsante bussola iOS — visibile solo se richiesto */}
         {isIos && compassPermission === 'unknown' && (
           <button
             onClick={requestCompassPermission}
@@ -669,36 +669,60 @@ function escapeHtml(input: string): string {
     .replace(/'/g, '&#39;')
 }
 
-// Marker del giocatore corrente con freccia bussola
+// Marker del giocatore corrente con freccia bussola.
+//
+// Strategia: il wrapper [data-compass-arrow] è un quadrato 40×40 centrato
+// esattamente sul cerchio. transform-origin è "center center" (default),
+// quindi rotate() gira attorno al centro del cerchio. La freccia è un
+// triangolo CSS posizionato nella metà superiore del wrapper, così quando
+// il wrapper ruota la freccia orbita intorno al cerchio.
 function selfMarkerHtml(label: string, heading: number): string {
   return `
     <div style="display:flex;flex-direction:column;align-items:center;gap:3px;pointer-events:none;">
-      <div style="position:relative;width:40px;height:40px;display:flex;align-items:center;justify-content:center;">
-        <!-- Freccia orientamento — ruotata via JS su data-compass-arrow -->
+      <div style="position:relative;width:40px;height:40px;">
+
+        <!-- Wrapper rotante — data-compass-arrow — ruota attorno al proprio
+             centro che coincide con il centro del cerchio sotto.
+             transform-origin default = "20px 20px" = center del quadrato 40×40. -->
         <div
           data-compass-arrow
           style="
             position:absolute;
-            top:0;left:50%;
-            transform-origin:bottom center;
-            transform:translateX(-50%) rotate(${heading}deg);
+            inset:0;
+            transform:rotate(${heading}deg);
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+            justify-content:flex-start;
+          "
+        >
+          <!-- Freccia: triangolo CSS a punta in alto, base a metà wrapper -->
+          <div style="
             width:0;height:0;
             border-left:5px solid transparent;
             border-right:5px solid transparent;
-            border-bottom:14px solid #feeaa5;
-            opacity:0.9;
+            border-bottom:12px solid #feeaa5;
+            opacity:0.95;
+            margin-top:2px;
             filter:drop-shadow(0 0 4px rgba(254,234,165,0.7));
-          "
-        ></div>
-        <!-- Cerchio centrale -->
+          "></div>
+        </div>
+
+        <!-- Cerchio centrale — sopra il wrapper rotante -->
         <div style="
-          width:28px;height:28px;border-radius:50%;
-          background:rgba(254,234,165,0.15);border:2px solid #feeaa5;
+          position:absolute;
+          inset:0;
           display:flex;align-items:center;justify-content:center;
-          font-size:13px;color:#feeaa5;
-          box-shadow:0 0 10px rgba(254,234,165,0.5);
-          z-index:1;
-        ">◈</div>
+        ">
+          <div style="
+            width:26px;height:26px;border-radius:50%;
+            background:rgba(254,234,165,0.15);border:2px solid #feeaa5;
+            display:flex;align-items:center;justify-content:center;
+            font-size:12px;color:#feeaa5;
+            box-shadow:0 0 10px rgba(254,234,165,0.5);
+          ">◈</div>
+        </div>
+
       </div>
       <div style="
         background:rgba(9,8,7,0.85);border:1px solid #feeaa5;
