@@ -313,7 +313,7 @@ export default function ItemsClient({ initialItems }: { initialItems: Item[] }) 
           <h1 style={{ fontFamily: 'Cinzel, serif', fontSize: '1.3rem', color: '#feeaa5', fontWeight: 400 }}>Oggetti</h1>
           <p style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.3)', marginTop: '0.2rem' }}>{items.length} oggetti nel catalogo</p>
         </div>
-        <button style={s.btn('primary')} onClick={openCreate}>+ Nuovo oggetto</button>
+        <button style={s.btn('primary')} onClick={() => router.push('/admin/items/new')}>+ Nuovo oggetto</button>
       </div>
 
       {/* Rarity filter */}

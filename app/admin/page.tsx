@@ -1,10 +1,11 @@
-import { createClient } from '@/lib/supabase/server'
+import { createServiceRoleClient } from '@/lib/supabase/service'
 import { ADVENTURE_ID } from '@/lib/constants'
 
 export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
 export default async function AdminDashboard() {
-  const supabase = await createClient()
+  const supabase = createServiceRoleClient()
 
   const [
     playerRes,
