@@ -321,7 +321,11 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
     return () => el.removeEventListener('touchmove', onTouchMove)
   }, [])
 
-  // ── GPS: auto-center sulla posizione del giocatore ────────────
+  // ── GPS: auto-center + aggiornamento marker self ────────────────
+  // gps:ok arriva ad ogni fix del browser (1-3s) — molto più frequente
+  // del Realtime (6s upload + latenza rete). Aggiorniamo subito sia il
+  // centro mappa che la posizione del marker self, senza aspettare il
+  // round-trip DB → Realtime → client.
   useEffect(() => {
     const onGpsOk = (e: Event) => {
       const detail = (e as CustomEvent<{ lat: number; lng: number }>).detail
@@ -331,12 +335,17 @@ export function MapView({ initialLocations, currentUserId, episodeId, mapMarkers
 
       const map = mapInstanceRef.current as {
         panTo: (c: [number, number], opts?: unknown) => void
-        setView: (c: [number, number], z: number, opts?: unknown) => void
       } | null
       if (!map) return
 
-      // Centra silenziosamente sul giocatore a ogni fix GPS
+      // 1. Centra la mappa sul giocatore
       map.panTo([detail.lat, detail.lng], { animate: false, noMoveStart: true })
+
+      // 2. Sposta il marker self immediatamente — zero latenza Realtime
+      const selfMarker = selfMarkerRef.current as {
+        setLatLng: (latlng: [number, number]) => void
+      } | null
+      selfMarker?.setLatLng([detail.lat, detail.lng])
     }
 
     window.addEventListener('gps:ok', onGpsOk)

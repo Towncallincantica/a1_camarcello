@@ -1,14 +1,16 @@
 import { createClient } from '@/lib/supabase/server'
 import { ADVENTURE_ID } from '@/lib/constants'
 
+export const dynamic = 'force-dynamic'
+
 export default async function AdminDashboard() {
   const supabase = await createClient()
 
   const [
-    { count: playerCount },
-    { count: episodeCount },
-    { count: itemCount },
-    { count: recipeCount },
+    playerRes,
+    episodeRes,
+    itemRes,
+    recipeRes,
   ] = await Promise.all([
     supabase.from('player').select('*', { count: 'exact', head: true }).eq('adventure_id', ADVENTURE_ID),
     supabase.from('episodes').select('*', { count: 'exact', head: true }).eq('adventure_id', ADVENTURE_ID),
@@ -17,10 +19,10 @@ export default async function AdminDashboard() {
   ])
 
   const stats = [
-    { label: 'Giocatori',    value: playerCount  ?? 0, icon: '◐' },
-    { label: 'Episodi',      value: episodeCount ?? 0, icon: '◉' },
-    { label: 'Oggetti',      value: itemCount    ?? 0, icon: '◆' },
-    { label: 'Combinazioni', value: recipeCount  ?? 0, icon: '⬡' },
+    { label: 'Giocatori',    value: playerRes.count  ?? 0, icon: '◐' },
+    { label: 'Episodi',      value: episodeRes.count ?? 0, icon: '◉' },
+    { label: 'Oggetti',      value: itemRes.count    ?? 0, icon: '◆' },
+    { label: 'Combinazioni', value: recipeRes.count  ?? 0, icon: '⬡' },
   ]
 
   return (
